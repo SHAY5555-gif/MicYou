@@ -91,6 +91,9 @@ data class AppUiState(
     val pcMusicAvailable: Boolean = false,
     val bluetoothDeviceName: String = "",
     val speakerGain: Float = 0.5f,
+    val bluetoothEchoCancellation: Boolean = false,
+    val microphoneSensitivity: Float = 0.3f,
+    val voiceDetected: Boolean = false,
     val microphoneEcho: Float = 0f,
     val microphoneEchoDelay: Float = 120f,
     val isAutoConfig: Boolean = true,
@@ -227,6 +230,9 @@ class MainViewModel : ViewModel() {
                         pcMusicAvailable = audioState.pcMusicAvailable,
                         bluetoothDeviceName = audioState.bluetoothDeviceName,
                         speakerGain = audioState.speakerGain,
+                        bluetoothEchoCancellation = audioState.bluetoothEchoCancellation,
+                        microphoneSensitivity = audioState.microphoneSensitivity,
+                        voiceDetected = audioState.voiceDetected,
                         microphoneEcho = audioState.microphoneEcho,
                         microphoneEchoDelay = audioState.microphoneEchoDelay,
                         isAutoConfig = audioState.isAutoConfig,
@@ -275,6 +281,8 @@ class MainViewModel : ViewModel() {
     fun setMicrophoneGain(value: Float) = audioStreamViewModel.setMicrophoneGain(value)
     fun setMusicGain(value: Float) = audioStreamViewModel.setMusicGain(value)
     fun setSpeakerGain(value: Float) = audioStreamViewModel.setSpeakerGain(value)
+    fun setBluetoothEchoCancellation(enabled: Boolean) = audioStreamViewModel.setBluetoothEchoCancellation(enabled)
+    fun setMicrophoneSensitivity(value: Float) = audioStreamViewModel.setMicrophoneSensitivity(value)
     fun setMicrophoneEcho(value: Float) = audioStreamViewModel.setMicrophoneEcho(value)
     fun setMicrophoneEchoDelay(value: Float) = audioStreamViewModel.setMicrophoneEchoDelay(value)
     fun startStream() = audioStreamViewModel.startStream()

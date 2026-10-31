@@ -4,8 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.media.*
 import android.media.AudioFormat as AndroidAudioFormat
-import android.media.audiofx.AcousticEchoCanceler
-import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Process
 import android.os.SystemClock
@@ -27,7 +25,8 @@ data class BluetoothMicrophoneState(
     val streamState: StreamState = StreamState.Idle,
     val isMuted: Boolean = true,
     val deviceName: String = "",
-    val error: String? = null
+    val error: String? = null,
+    val voiceDetected: Boolean = false
 )
 
 /** On-device PCM monitoring. No network, desktop server, or speech codec. */
@@ -47,6 +46,8 @@ class BluetoothMicrophoneEngine {
     private val _levels = MutableStateFlow(0f)
     val levels = _levels.asStateFlow()
     val mixer = MicrophoneMixer()
+    @Volatile var echoCancellationEnabled = false
+    val closeVoiceGate = CloseVoiceGate()
     private val gate = MicrophoneGate()
     private val flushRequested = AtomicBoolean(false)
     private var job: Job? = null
@@ -69,6 +70,7 @@ class BluetoothMicrophoneEngine {
     private fun publishMute() {
         if (gate.isMuted) {
             mixer.reset()
+            closeVoiceGate.reset()
             flushRequested.set(true)
         }
         _state.update { it.copy(isMuted = gate.isMuted) }
@@ -96,11 +98,10 @@ class BluetoothMicrophoneEngine {
             Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
             var recorder: AudioRecord? = null
             var player: AudioTrack? = null
-            var noise: NoiseSuppressor? = null
-            var echo: AcousticEchoCanceler? = null
+            var echo: SpeakerEchoCanceller? = null
             try {
-                val rate = manager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)
-                    ?.toIntOrNull()?.takeIf { it in listOf(44100, 48000) } ?: 48000
+                val useEchoCancellation = echoCancellationEnabled
+                val rate = if (useEchoCancellation) 16000 else 48000
                 val blockFrames = (rate / 100).coerceAtLeast(1)
                 val recordMin = AudioRecord.getMinBufferSize(rate, AndroidAudioFormat.CHANNEL_IN_MONO,
                     AndroidAudioFormat.ENCODING_PCM_16BIT)
@@ -112,18 +113,15 @@ class BluetoothMicrophoneEngine {
                 val outputFormat = AndroidAudioFormat.Builder().setSampleRate(rate)
                     .setEncoding(AndroidAudioFormat.ENCODING_PCM_16BIT).setChannelMask(AndroidAudioFormat.CHANNEL_OUT_MONO).build()
                 recorder = AudioRecord.Builder()
-                    .setAudioSource(if (Build.VERSION.SDK_INT >= 29) MediaRecorder.AudioSource.VOICE_PERFORMANCE
-                        else MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                    .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
                     .setAudioFormat(inputFormat).setBufferSizeInBytes(maxOf(recordMin, blockFrames * 4)).build()
                 check(recorder.state == AudioRecord.STATE_INITIALIZED) { "Microphone initialization failed" }
                 manager.getDevices(AudioManager.GET_DEVICES_INPUTS)
                     .firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
                     ?.let { recorder.setPreferredDevice(it) }
-                runCatching {
-                    if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(recorder.audioSessionId)
-                    noise?.enabled = true
-                    if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(recorder.audioSessionId)
-                    echo?.enabled = true
+                if (useEchoCancellation) {
+                    echo = try { SpeakerEchoCanceller(rate) }
+                        catch (error: LinkageError) { throw IllegalStateException("Speaker echo filter could not load", error) }
                 }
                 val builder = AudioTrack.Builder().setAudioFormat(outputFormat)
                     .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
@@ -159,7 +157,8 @@ class BluetoothMicrophoneEngine {
                 var previousUnderruns = player.underrunCount
                 var readFrames = 0L
                 var writtenFrames = 0L
-                Logger.i("BluetoothMic", "Direct PCM rate=$rate block=$blockFrames outputBuffer=${player.bufferSizeInFrames} ns=${noise?.enabled} aec=${echo?.enabled}")
+                var maximumInputRms = 0f
+                Logger.i("BluetoothMic", "Direct PCM rate=$rate block=$blockFrames outputBuffer=${player.bufferSizeInFrames} aec=${if (useEchoCancellation) "WebRTC-AEC3" else "off"} sensitivity=${closeVoiceGate.sensitivity}")
                 while (isActive) {
                     val routed = player.routedDevice
                     if (!routeVerified && routed?.id == output.id) {
@@ -179,19 +178,37 @@ class BluetoothMicrophoneEngine {
                         player.play()
                         settleUntil = SystemClock.elapsedRealtime() + 1500
                     }
-                    val count = recorder.read(samples, 0, samples.size, AudioRecord.READ_BLOCKING)
-                    if (count < 0) throw IllegalStateException("Microphone read failed: $count")
-                    if (count == 0) { delay(1); continue }
+                    var count = 0
+                    while (count < samples.size) {
+                        ensureActive()
+                        val read = recorder.read(samples, count, samples.size - count, AudioRecord.READ_BLOCKING)
+                        if (read < 0) throw IllegalStateException("Microphone read failed: $read")
+                        if (read == 0) delay(1) else count += read
+                    }
                     var peak = 0
-                    for (index in 0 until count) peak = maxOf(peak, kotlin.math.abs(samples[index].toInt()))
+                    var power = 0.0
+                    for (index in 0 until count) {
+                        peak = maxOf(peak, kotlin.math.abs(samples[index].toInt()))
+                        power += samples[index].toDouble() * samples[index]
+                    }
+                    val inputRms = kotlin.math.sqrt(power / count).toFloat() / 32768f
+                    maximumInputRms = maxOf(maximumInputRms, inputRms)
                     _levels.value = peak / 32768f
-                    if (routeVerified && gate.isTransmitting) mixer.process(samples, count, rate, 1)
-                    else samples.fill(0, 0, count)
+                    echo?.processCapture(samples)
+                    closeVoiceGate.process(samples, count, rate, inputRms)
+                    if (_state.value.voiceDetected != closeVoiceGate.isOpen) {
+                        _state.update { it.copy(voiceDetected = closeVoiceGate.isOpen) }
+                    }
+                    if (routeVerified && gate.isTransmitting) {
+                        mixer.process(samples, count, rate, 1)
+                    } else samples.fill(0, 0, count)
                     readFrames += count
-                    writtenFrames += writePcmFully(samples, count,
+                    val written = writePcmFully(samples, count,
                         keepWriting = { !flushRequested.get() }) { data, offset, size ->
                         player.write(data, offset, size, AudioTrack.WRITE_BLOCKING)
                     }
+                    writtenFrames += written
+                    echo?.analyzeRender(samples, written)
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastReport >= 5000) {
                         val underruns = player.underrunCount
@@ -201,7 +218,9 @@ class BluetoothMicrophoneEngine {
                                 player.bufferSizeInFrames + blockFrames * 2)
                             player.setBufferSizeInFrames(enlarged)
                         }
-                        Logger.i("BluetoothMic", "PCM health read=$readFrames written=$writtenFrames underruns=$underruns delta=$newUnderruns outputBuffer=${player.bufferSizeInFrames}")
+                        val metrics = echo?.metrics()
+                        Logger.i("BluetoothMic", "PCM health read=$readFrames written=$writtenFrames underruns=$underruns delta=$newUnderruns outputBuffer=${player.bufferSizeInFrames} voiceGate=${closeVoiceGate.isOpen} maxInputDb=${20 * kotlin.math.log10(maximumInputRms.coerceAtLeast(0.000001f))} aecDelay=${metrics?.delayMs} erle=${metrics?.echoReturnLossEnhancement}")
+                        maximumInputRms = 0f
                         previousUnderruns = underruns
                         lastReport = now
                     }
@@ -216,10 +235,11 @@ class BluetoothMicrophoneEngine {
             } finally {
                 gate.reset()
                 mixer.reset()
+                closeVoiceGate.reset()
                 runCatching { player?.pause(); player?.flush(); player?.release() }
                 currentPlayer = null
                 runCatching { recorder?.stop(); recorder?.release() }
-                runCatching { noise?.release(); echo?.release() }
+                runCatching { echo?.close() }
                 _levels.value = 0f
                 _state.update { it.copy(isMuted = true,
                     streamState = if (it.streamState == StreamState.Error) StreamState.Error else StreamState.Idle) }

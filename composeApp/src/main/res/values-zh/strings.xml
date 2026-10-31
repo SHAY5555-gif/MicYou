@@ -415,10 +415,13 @@
     <string name="mixerMusicHint">Open the music player on the PC to control its level over USB.</string>
     <string name="modeBluetooth">Bluetooth</string>
     <string name="bluetoothStart">Connect Bluetooth</string>
+    <string name="bluetoothEchoCancellation">回声消除</string>
+    <string name="microphoneSensitivity">灵敏度</string>
+    <string name="nearVoiceWaiting">请靠近手机说话</string>
     <string name="bluetoothSettings">Bluetooth settings</string>
     <string name="bluetoothConnectFirst">Connect your soundbar in Bluetooth settings, then return here. No computer is needed.</string>
     <string name="bluetoothRouteFailed">Could not route audio to the Bluetooth speaker. Connect it and try again.</string>
     <string name="bluetoothRouteLost">Bluetooth speaker disconnected. Microphone stopped.</string>
     <string name="bluetoothSpeakerVolume">Speaker</string>
-    <string name="bluetoothLocalHint">Direct to Bluetooth. Wireless audio still adds some delay.</string>
+    <string name="bluetoothLocalHint">Lower sensitivity reduces distant sound pickup.</string>
 </resources>

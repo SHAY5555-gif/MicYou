@@ -72,6 +72,9 @@ data class AudioStreamUiState(
     val pcMusicAvailable: Boolean = false,
     val bluetoothDeviceName: String = "",
     val speakerGain: Float = 0.5f,
+    val bluetoothEchoCancellation: Boolean = false,
+    val microphoneSensitivity: Float = 0.3f,
+    val voiceDetected: Boolean = false,
     val microphoneEcho: Float = 0f,
     val microphoneEchoDelay: Float = 120f,
     val isAutoConfig: Boolean = true,
@@ -158,6 +161,8 @@ class AudioStreamViewModel : ViewModel() {
         setMicrophoneGain(settings.getFloat("microphone_gain", 1f))
         setMicrophoneEcho(settings.getFloat("microphone_echo", 0f))
         setMicrophoneEchoDelay(settings.getFloat("microphone_echo_delay", 120f))
+        setBluetoothEchoCancellation(settings.getBoolean("bluetooth_echo_cancellation", false))
+        setMicrophoneSensitivity(settings.getFloat("microphone_sensitivity", 0.3f))
         val savedModeName = settings.getString("connection_mode", ConnectionMode.Wifi.name)
     val savedMode = when (savedModeName) {
             "WifiUdp" -> ConnectionMode.Wifi
@@ -228,7 +233,8 @@ class AudioStreamViewModel : ViewModel() {
             _bluetoothEngine.state.collect { state ->
                 if (_uiState.value.mode == ConnectionMode.Bluetooth) _uiState.update {
                     it.copy(streamState = state.streamState, isMuted = state.isMuted,
-                        bluetoothDeviceName = state.deviceName, errorMessage = state.error)
+                        bluetoothDeviceName = state.deviceName, errorMessage = state.error,
+                        voiceDetected = state.voiceDetected)
                 }
             }
         }
@@ -307,6 +313,21 @@ class AudioStreamViewModel : ViewModel() {
         val level = (value.coerceIn(0f, 1f) * maximum).toInt()
         manager.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0)
         _uiState.update { it.copy(speakerGain = level.toFloat() / maximum) }
+    }
+
+    fun setBluetoothEchoCancellation(enabled: Boolean) {
+        if (_uiState.value.mode == ConnectionMode.Bluetooth &&
+            _uiState.value.streamState == StreamState.Streaming) stopStream()
+        _bluetoothEngine.echoCancellationEnabled = enabled
+        _uiState.update { it.copy(bluetoothEchoCancellation = enabled) }
+        settings.putBoolean("bluetooth_echo_cancellation", enabled)
+    }
+
+    fun setMicrophoneSensitivity(value: Float) {
+        val sensitivity = (if (value.isFinite()) value else 0.3f).coerceIn(0f, 1f)
+        _bluetoothEngine.closeVoiceGate.sensitivity = sensitivity
+        _uiState.update { it.copy(microphoneSensitivity = sensitivity) }
+        settings.putFloat("microphone_sensitivity", sensitivity)
     }
 
     fun setMicrophoneEcho(value: Float) {

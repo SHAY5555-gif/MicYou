@@ -498,6 +498,12 @@ private fun ConnectionConfigCard(
                 androidx.compose.material3.TextButton(onClick = {
                     context.startActivity(android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
                 }) { Text(stringResource(R.string.bluetoothSettings)) }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(stringResource(R.string.bluetoothEchoCancellation), style = MaterialTheme.typography.bodySmall)
+                    androidx.compose.material3.Switch(checked = state.bluetoothEchoCancellation,
+                        onCheckedChange = viewModel::setBluetoothEchoCancellation)
+                }
             }
 
 

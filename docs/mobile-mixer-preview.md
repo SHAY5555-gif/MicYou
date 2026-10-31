@@ -24,8 +24,18 @@ official app. The desktop 2.1.1 wire protocol is unchanged.
 - In direct Bluetooth mode that fader becomes **Speaker**, controlling Android
   media volume separately from microphone gain.
 - Echo level ranges from 0% to 50%. Zero is dry, without an added echo.
+- Direct Bluetooth has a **Sensitivity** fader, initially 30%. Lower values
+  require a louder input, allowing close speech through while rejecting softer
+  room pickup. It acts before output gain, so boosting microphone volume does
+  not also lower the pickup threshold. At 100% it bypasses this gate.
+- The gate uses an approximately -31.5 dBFS opening threshold at its initial
+  setting, hysteresis, a 60 ms quiet hold, 4 ms attack and 15 ms release. It
+  measures input level, not physical distance. A loud nearby speaker can still
+  exceed the threshold.
+- The connection panel retains an optional **Echo cancellation** experiment,
+  off by default. Changing it requires reconnecting.
 - Echo delay ranges from 50 to 450 milliseconds.
-- The four controls use vertical console faders. Dragging up increases the
+- The controls use vertical console faders. Dragging up increases the
   value; dragging down decreases it. The displayed number updates immediately.
 - Mixer settings are saved on the phone. Connecting again always starts muted.
 
@@ -41,7 +51,7 @@ Direct Bluetooth sends silence to keep the output warm and flushes the app's
 playback buffer when muted. It cannot recall audio already buffered by the
 Bluetooth receiver.
 
-Direct Bluetooth requests 10 ms capture blocks, native 44.1/48 kHz audio, a
+Direct Bluetooth normally requests 10 ms capture blocks, 48 kHz mono audio, a
 40 ms initial output buffer and Android low-latency playback where supported.
 Complete blocking writes preserve the input sequence when the output accepts
 only part of a block. Underrun monitoring can enlarge the output buffer within
@@ -71,11 +81,14 @@ automatically after a PC reboot.
 Added echo and acoustic feedback are different. The echo slider cannot remove
 sound that travels from a loudspeaker back into the microphone. Keep the desktop
 echo canceller enabled for PC transports and begin with added echo at zero.
-Direct Bluetooth uses optional Android noise suppression and acoustic echo
-cancellation when available. It does not run the desktop AEC7/RNNoise engine,
-and Android effect availability does not prove effective cancellation for an
-external soundbar. Noise reduction and level gating do not measure the
-distance to a speaker.
+The optional Bluetooth cancellation experiment uses WebRTC AEC3 with its actual
+output as the echo reference, including a history for Bluetooth delay. It uses
+16 kHz voice audio and does not run the desktop AEC7/RNNoise engine. The optional
+Android effects were replaced, since their enabled state did not establish
+effective cancellation for the soundbar. The dependency is pinned to version
+1.0.3 and its working 16 kHz path; a native synthetic test caught ineffective
+cancellation at 48 kHz in that published binary. The normal close-pickup path
+does not enable this optional processor.
 
 ## Validation
 
@@ -113,13 +126,27 @@ server, USB transport, and HDMI output:
   voice session and the master output retained their previous levels.
 - An out-of-range bridge request was rejected without changing the music level.
 
-The direct Bluetooth build passes 16 unit tests and the debug build. It
-has been installed on the physical SM-F9710 and connected to the Q70T:
+The direct Bluetooth build has 21 unit tests and a debug build. Five close-pickup
+tests cover rejecting quiet input even with output gain, smooth voice onset,
+closing before a delayed quiet repeat, sensitivity adjustment and bypass.
+Two native
+Android tests check delayed-echo suppression and preservation of a voice signal
+without echo. They run without microphone recordings or speaker output:
+
+```sh
+./gradlew :composeApp:assembleDebugAndroidTest
+adb install -r composeApp/build/outputs/apk/androidTest/debug/composeApp-debug-androidTest.apk
+adb shell am instrument -w com.lanrhyme.micyou.ptt.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+The app has been installed on the physical SM-F9710 and connected to the Q70T:
 
 - Android confirmed the active AudioTrack route as Samsung Soundbar Q70T.
-  The revised engine reports 48 kHz, 480-frame input blocks and a 1920-frame
-  app output buffer. Android noise suppression and AEC report enabled. These
-  are local parameters, not an acoustic latency measurement.
+  The normal close-pickup engine reports 48 kHz, 480-frame input blocks and an
+  initial 1920-frame app output buffer. The optional AEC3 path uses 16 kHz,
+  160-frame blocks and a 640-frame initial output buffer. These are local
+  parameters, not an acoustic latency measurement. The buffer can grow on
+  sustained underruns.
 - Push to talk showed transmitting while held and muted after release.
 - Normal stayed on after the tap and muted on the next tap.
 - Disconnecting only the paired soundbar stopped capture and displayed the
@@ -137,10 +164,17 @@ The first direct build failed the user's listening test with chopped/robotic
 audio. Its nonblocking output discarded samples when full. The replacement
 preserves partial writes and recorded more than 40 seconds with zero Android
 underruns on the Q70T; explicit mute may discard an in-flight tail by design.
-The user subsequently reported a sustained tone, so acoustic feedback and
-high gain are being checked with microphone gain reduced from 301% to about
-100%, speaker volume at 27% and added echo at zero. A clean listening result
-and an acoustic latency comparison remain unverified.
+The user subsequently reported a sustained tone and repeated voice. The
+reference-aware WebRTC AEC3 experiment passed the native synthetic test with
+63.46 dB echo reduction and preserved the independent voice test, but did not
+resolve repetitions in the actual room. The user requested close-pickup control
+instead. This is now the normal Bluetooth path, with the unproven AEC experiment
+optional. Start with sensitivity 30%, microphone gain around 100%, speaker
+volume 27% and added echo zero. With sensitivity set to 20%, the user reported
+the result was much better, with residual fizz/crackle still present. Full
+sound-quality acceptance and an acoustic latency comparison remain unverified.
+Release shrinking (`:composeApp:minifyReleaseWithR8`) also passes; no release
+was installed or published.
 See `samsung-wireless-audio-research.md` for the SDK investigation.
 
 The user confirmed sound only while holding the talk button, without duplicated

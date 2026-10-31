@@ -37,6 +37,7 @@ fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
     val talkLabel = stringResource(when {
         !state.pushToTalkEnabled && holding -> R.string.normalMute
         !state.pushToTalkEnabled -> R.string.normalStart
+        holding && direct && !state.voiceDetected -> R.string.nearVoiceWaiting
         holding -> R.string.pttTalking
         else -> R.string.pttHold
     })
@@ -58,7 +59,7 @@ fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
         Modifier.clickable(enabled = connected) { latestViewModel.toggleMute() }
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val compact = maxHeight < 400.dp
+        val compact = maxHeight < 520.dp
         val contentHeight = maxOf(maxHeight, 360.dp)
         Column(
             modifier = Modifier.fillMaxSize()
@@ -81,6 +82,11 @@ fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
             if (direct && connected) Text(state.bluetoothDeviceName,
                 style = MaterialTheme.typography.bodySmall, color = Color(0xFFB6C3B5))
             Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (direct) MixerFader(
+                    stringResource(R.string.microphoneSensitivity), "${(state.microphoneSensitivity * 100).roundToInt()}%",
+                    state.microphoneSensitivity, 0f..1f, "0", "100%", Color(0xFFD8B2F2),
+                    Modifier.weight(1f).fillMaxHeight(), compact, viewModel::setMicrophoneSensitivity
+                )
                 MixerFader(
                     stringResource(R.string.mixerVolume), "${(state.microphoneGain * 100).roundToInt()}%",
                     state.microphoneGain, 0f..MicrophoneMixer.MAX_GAIN, "0", "600%", Color(0xFFBAE28B),
