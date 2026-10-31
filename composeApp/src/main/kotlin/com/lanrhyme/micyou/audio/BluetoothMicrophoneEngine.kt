@@ -51,6 +51,7 @@ class BluetoothMicrophoneEngine {
     private val flushRequested = AtomicBoolean(false)
     private var job: Job? = null
     private var closeJob: Job? = null
+    @Volatile private var currentPlayer: AudioTrack? = null
 
     fun setPushToTalkEnabled(enabled: Boolean) {
         if (gate.setMode(enabled)) publishMute()
@@ -100,7 +101,7 @@ class BluetoothMicrophoneEngine {
             try {
                 val rate = manager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)
                     ?.toIntOrNull()?.takeIf { it in listOf(44100, 48000) } ?: 48000
-                val blockFrames = (rate / 200).coerceAtLeast(1)
+                val blockFrames = (rate / 100).coerceAtLeast(1)
                 val recordMin = AudioRecord.getMinBufferSize(rate, AndroidAudioFormat.CHANNEL_IN_MONO,
                     AndroidAudioFormat.ENCODING_PCM_16BIT)
                 val playMin = AudioTrack.getMinBufferSize(rate, AndroidAudioFormat.CHANNEL_OUT_MONO,
@@ -128,23 +129,36 @@ class BluetoothMicrophoneEngine {
                     .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
                     .setTransferMode(AudioTrack.MODE_STREAM)
-                    .setBufferSizeInBytes(maxOf(playMin, blockFrames * 4))
+                    .setBufferSizeInBytes(maxOf(playMin, blockFrames * 24))
                 if (Build.VERSION.SDK_INT >= 26) builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
                 player = builder.build()
+                currentPlayer = player
                 check(player.state == AudioTrack.STATE_INITIALIZED) { "Bluetooth output initialization failed" }
                 check(player.setPreferredDevice(output)) { getString(R.string.bluetoothRouteFailed) }
-                player.setBufferSizeInFrames(blockFrames * 2)
+                player.setBufferSizeInFrames(blockFrames * 4)
                 val serviceIntent = Intent(context, AudioService::class.java).apply {
                     action = AudioService.ACTION_START
                     putExtra(AudioService.EXTRA_USE_WIFI_LOCK, false)
                 }
                 if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(serviceIntent)
                 else context.startService(serviceIntent)
-                recorder.startRecording()
+                suspend fun primeOutput() {
+                    val silence = ShortArray(player.bufferSizeInFrames)
+                    writePcmFully(silence, silence.size) { data, offset, size ->
+                        player.write(data, offset, size, AudioTrack.WRITE_BLOCKING)
+                    }
+                }
+                primeOutput()
                 player.play()
+                recorder.startRecording()
                 val samples = ShortArray(blockFrames)
                 val started = SystemClock.elapsedRealtime()
                 var routeVerified = false
+                var lastReport = started
+                var settleUntil = started + 1500
+                var previousUnderruns = player.underrunCount
+                var readFrames = 0L
+                var writtenFrames = 0L
                 Logger.i("BluetoothMic", "Direct PCM rate=$rate block=$blockFrames outputBuffer=${player.bufferSizeInFrames} ns=${noise?.enabled} aec=${echo?.enabled}")
                 while (isActive) {
                     val routed = player.routedDevice
@@ -161,9 +175,11 @@ class BluetoothMicrophoneEngine {
                     if (flushRequested.getAndSet(false)) {
                         player.pause()
                         player.flush()
+                        primeOutput()
                         player.play()
+                        settleUntil = SystemClock.elapsedRealtime() + 1500
                     }
-                    val count = recorder.read(samples, 0, samples.size, AudioRecord.READ_NON_BLOCKING)
+                    val count = recorder.read(samples, 0, samples.size, AudioRecord.READ_BLOCKING)
                     if (count < 0) throw IllegalStateException("Microphone read failed: $count")
                     if (count == 0) { delay(1); continue }
                     var peak = 0
@@ -171,10 +187,24 @@ class BluetoothMicrophoneEngine {
                     _levels.value = peak / 32768f
                     if (routeVerified && gate.isTransmitting) mixer.process(samples, count, rate, 1)
                     else samples.fill(0, 0, count)
-                    val written = player.write(samples, 0, count, AudioTrack.WRITE_NON_BLOCKING)
-                    if (written < 0) throw IllegalStateException("Bluetooth write failed: $written")
-                    // A full output queue drops the current tail instead of accumulating stale voice.
-                    if (written < count) delay(1)
+                    readFrames += count
+                    writtenFrames += writePcmFully(samples, count,
+                        keepWriting = { !flushRequested.get() }) { data, offset, size ->
+                        player.write(data, offset, size, AudioTrack.WRITE_BLOCKING)
+                    }
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastReport >= 5000) {
+                        val underruns = player.underrunCount
+                        val newUnderruns = underruns - previousUnderruns
+                        if (newUnderruns > 0 && now >= settleUntil) {
+                            val enlarged = minOf(player.bufferCapacityInFrames,
+                                player.bufferSizeInFrames + blockFrames * 2)
+                            player.setBufferSizeInFrames(enlarged)
+                        }
+                        Logger.i("BluetoothMic", "PCM health read=$readFrames written=$writtenFrames underruns=$underruns delta=$newUnderruns outputBuffer=${player.bufferSizeInFrames}")
+                        previousUnderruns = underruns
+                        lastReport = now
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 ready.completeExceptionally(cancelled)
@@ -187,6 +217,7 @@ class BluetoothMicrophoneEngine {
                 gate.reset()
                 mixer.reset()
                 runCatching { player?.pause(); player?.flush(); player?.release() }
+                currentPlayer = null
                 runCatching { recorder?.stop(); recorder?.release() }
                 runCatching { noise?.release(); echo?.release() }
                 _levels.value = 0f
@@ -204,11 +235,17 @@ class BluetoothMicrophoneEngine {
         }
     }
 
-    fun stop() { scope.launch { stopAndWait() } }
+    fun stop() {
+        job?.cancel()
+        runCatching { currentPlayer?.pause() }
+        scope.launch { stopAndWait() }
+    }
 
     suspend fun stopAndWait() {
         gate.reset()
         publishMute()
+        job?.cancel()
+        runCatching { currentPlayer?.pause() }
         job?.cancelAndJoin()
         job = null
         _state.update { it.copy(streamState = StreamState.Idle, error = null) }

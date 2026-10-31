@@ -9,11 +9,17 @@ directly to a connected A2DP output. It does not use the desktop server, Opus,
 TCP, or a cloud service. The selected Bluetooth route must be confirmed before
 the talk control becomes available. Losing that route stops the microphone.
 
-The engine requests the device-native 44.1/48 kHz rate, approximately 5 ms input
-blocks, low-latency output where Android supports it, and a small output buffer.
-It drops unsent tail samples instead of accumulating a queue. Muting flushes
-the application's playback buffer, although audio already buffered inside a
-Bluetooth receiver cannot be recalled.
+The engine requests the device-native 44.1/48 kHz rate, 10 ms input blocks,
+low-latency output where Android supports it, and an initial 40 ms application
+output buffer. Blocking reads and complete writes preserve every sample across
+partial output writes. Sustained underruns can increase the buffer within its
+allocated capacity. Muting flushes and primes the application playback buffer;
+audio already buffered inside a Bluetooth receiver cannot be recalled.
+
+The initial 5 ms/nonblocking implementation dropped unwritten samples and the
+user reported chopped/robotic audio. That implementation failed the listening
+test. The replacement logs input/output frame counts and underruns so transport
+continuity can be distinguished from acoustic feedback and receiver latency.
 
 The existing microphone gain, echo and limiter run on the phone. Noise
 suppression and acoustic echo cancellation use optional Android effects when

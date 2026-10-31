@@ -41,11 +41,13 @@ Direct Bluetooth sends silence to keep the output warm and flushes the app's
 playback buffer when muted. It cannot recall audio already buffered by the
 Bluetooth receiver.
 
-Direct Bluetooth requests roughly 5 ms capture blocks, native 44.1/48 kHz
-audio, a small output buffer and Android low-latency playback where supported.
-Unsent samples are dropped rather than queued. These settings do not establish
-the acoustic latency of the soundbar. The actual Bluetooth route is checked
-before transmission and during playback; route loss stops the session.
+Direct Bluetooth requests 10 ms capture blocks, native 44.1/48 kHz audio, a
+40 ms initial output buffer and Android low-latency playback where supported.
+Complete blocking writes preserve the input sequence when the output accepts
+only part of a block. Underrun monitoring can enlarge the output buffer within
+its allocated capacity. These settings do not establish the acoustic latency
+of the soundbar. The actual Bluetooth route is checked before transmission and
+during playback; route loss stops the session.
 
 A stereo-linked peak limiter caps boosted PCM at approximately 95% of full
 scale, with immediate attenuation and an 80 ms recovery envelope. It adds no
@@ -88,7 +90,8 @@ The six mixer tests cover dry processing, zero volume including an existing
 echo tail, delay timing and reset, sixfold boost, peak limiting, and stereo
 balance. Six transmission
 gate tests cover connected presses, release, normal mode latching, explicit
-mute, mode changes, and connection reset.
+mute, mode changes, and connection reset. Four PCM writer tests cover partial
+and empty writes, sample ordering, explicit mute, cancellation and errors.
 
 Manual preview checks on a physical SM-F9710 with the official Windows 2.1.1
 server, USB transport, and HDMI output:
@@ -110,13 +113,13 @@ server, USB transport, and HDMI output:
   voice session and the master output retained their previous levels.
 - An out-of-range bridge request was rejected without changing the music level.
 
-The direct Bluetooth build passes the same 12 unit tests and debug build. It
+The direct Bluetooth build passes 16 unit tests and the debug build. It
 has been installed on the physical SM-F9710 and connected to the Q70T:
 
 - Android confirmed the active AudioTrack route as Samsung Soundbar Q70T.
-  The engine reported 48 kHz, 240-frame input blocks and a 480-frame app output
-  buffer. Android noise suppression and AEC reported enabled. These are local
-  parameters, not an acoustic latency measurement.
+  The revised engine reports 48 kHz, 480-frame input blocks and a 1920-frame
+  app output buffer. Android noise suppression and AEC report enabled. These
+  are local parameters, not an acoustic latency measurement.
 - Push to talk showed transmitting while held and muted after release.
 - Normal stayed on after the tap and muted on the next tap.
 - Disconnecting only the paired soundbar stopped capture and displayed the
@@ -130,9 +133,15 @@ has been installed on the physical SM-F9710 and connected to the Q70T:
 The initial connection failed because the soundbar had automatically connected
 to a Samsung Smart Monitor M7. Switching the existing Bluetooth connection to
 the phone through SmartThings resolved it. No pairing was removed.
-User confirmation of audible output with USB unplugged and an acoustic delay
-comparison are still pending. See `samsung-wireless-audio-research.md` for the
-SDK investigation.
+The first direct build failed the user's listening test with chopped/robotic
+audio. Its nonblocking output discarded samples when full. The replacement
+preserves partial writes and recorded more than 40 seconds with zero Android
+underruns on the Q70T; explicit mute may discard an in-flight tail by design.
+The user subsequently reported a sustained tone, so acoustic feedback and
+high gain are being checked with microphone gain reduced from 301% to about
+100%, speaker volume at 27% and added echo at zero. A clean listening result
+and an acoustic latency comparison remain unverified.
+See `samsung-wireless-audio-research.md` for the SDK investigation.
 
 The user confirmed sound only while holding the talk button, without duplicated
 voice at zero added echo, before the fader-only UI update. These checks do not
