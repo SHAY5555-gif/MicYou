@@ -29,8 +29,16 @@ An optional path uses the pinned
 `cn.enaium.webrtc.aec3:webrtc-aec3-kmp:1.0.3` native WebRTC AEC3 binding, with
 the actual post-mixer output as its render reference.
 A short history aligns that reference with the delayed speaker path. Capture
-uses `VOICE_RECOGNITION`; the previous Android AEC/NS pair is not layered over
-the software canceller. The desktop AEC7/RNNoise processing is not used.
+uses `VOICE_RECOGNITION`; the Android AEC/NS pair is not layered over the
+software canceller. The default close-pickup path uses optional Android noise
+suppression plus an 85 Hz DC/rumble filter and smoother gate transitions.
+The desktop AEC7/RNNoise processing is not used.
+
+On 2026-10-31 the phone's update screen reported up to date after a fresh check
+(Android 17, security patch 2026-10-05). SmartThings showed soundbar firmware
+`HW-Q70TWWB-1022.0`, matching Samsung's currently published 1022.0 USB package
+on its [support page](https://www.samsung.com/de/support/model/HW-Q70T/EN/).
+No phone or soundbar firmware was installed as part of these checks.
 
 The dependency's published 48 kHz binary failed an on-device synthetic echo
 test (0 dB reduction). Its 16 kHz path passed, including preserving near-end

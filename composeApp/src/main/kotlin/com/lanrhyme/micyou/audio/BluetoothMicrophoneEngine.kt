@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.*
 import android.media.AudioFormat as AndroidAudioFormat
+import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Process
 import android.os.SystemClock
@@ -99,6 +100,7 @@ class BluetoothMicrophoneEngine {
             var recorder: AudioRecord? = null
             var player: AudioTrack? = null
             var echo: SpeakerEchoCanceller? = null
+            var noise: NoiseSuppressor? = null
             try {
                 val useEchoCancellation = echoCancellationEnabled
                 val rate = if (useEchoCancellation) 16000 else 48000
@@ -122,7 +124,13 @@ class BluetoothMicrophoneEngine {
                 if (useEchoCancellation) {
                     echo = try { SpeakerEchoCanceller(rate) }
                         catch (error: LinkageError) { throw IllegalStateException("Speaker echo filter could not load", error) }
+                } else {
+                    runCatching {
+                        if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(recorder.audioSessionId)
+                        noise?.enabled = true
+                    }
                 }
+                val conditioner = MicrophoneConditioner()
                 val builder = AudioTrack.Builder().setAudioFormat(outputFormat)
                     .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
@@ -158,7 +166,9 @@ class BluetoothMicrophoneEngine {
                 var readFrames = 0L
                 var writtenFrames = 0L
                 var maximumInputRms = 0f
-                Logger.i("BluetoothMic", "Direct PCM rate=$rate block=$blockFrames outputBuffer=${player.bufferSizeInFrames} aec=${if (useEchoCancellation) "WebRTC-AEC3" else "off"} sensitivity=${closeVoiceGate.sensitivity}")
+                var clippedInputSamples = 0L
+                var inputSamples = 0L
+                Logger.i("BluetoothMic", "Direct PCM rate=$rate block=$blockFrames outputBuffer=${player.bufferSizeInFrames} aec=${if (useEchoCancellation) "WebRTC-AEC3" else "off"} ns=${noise?.enabled} sensitivity=${closeVoiceGate.sensitivity}")
                 while (isActive) {
                     val routed = player.routedDevice
                     if (!routeVerified && routed?.id == output.id) {
@@ -187,6 +197,11 @@ class BluetoothMicrophoneEngine {
                     }
                     var peak = 0
                     var power = 0.0
+                    for (index in 0 until count) {
+                        if (kotlin.math.abs(samples[index].toInt()) >= 32700) clippedInputSamples++
+                    }
+                    inputSamples += count
+                    if (!useEchoCancellation) conditioner.process(samples, count, rate)
                     for (index in 0 until count) {
                         peak = maxOf(peak, kotlin.math.abs(samples[index].toInt()))
                         power += samples[index].toDouble() * samples[index]
@@ -219,8 +234,10 @@ class BluetoothMicrophoneEngine {
                             player.setBufferSizeInFrames(enlarged)
                         }
                         val metrics = echo?.metrics()
-                        Logger.i("BluetoothMic", "PCM health read=$readFrames written=$writtenFrames underruns=$underruns delta=$newUnderruns outputBuffer=${player.bufferSizeInFrames} voiceGate=${closeVoiceGate.isOpen} maxInputDb=${20 * kotlin.math.log10(maximumInputRms.coerceAtLeast(0.000001f))} aecDelay=${metrics?.delayMs} erle=${metrics?.echoReturnLossEnhancement}")
+                        Logger.i("BluetoothMic", "PCM health read=$readFrames written=$writtenFrames underruns=$underruns delta=$newUnderruns outputBuffer=${player.bufferSizeInFrames} voiceGate=${closeVoiceGate.isOpen} maxInputDb=${20 * kotlin.math.log10(maximumInputRms.coerceAtLeast(0.000001f))} clippedPct=${100.0 * clippedInputSamples / inputSamples.coerceAtLeast(1)} aecDelay=${metrics?.delayMs} erle=${metrics?.echoReturnLossEnhancement}")
                         maximumInputRms = 0f
+                        clippedInputSamples = 0L
+                        inputSamples = 0L
                         previousUnderruns = underruns
                         lastReport = now
                     }
@@ -240,6 +257,7 @@ class BluetoothMicrophoneEngine {
                 currentPlayer = null
                 runCatching { recorder?.stop(); recorder?.release() }
                 runCatching { echo?.close() }
+                runCatching { noise?.release() }
                 _levels.value = 0f
                 _state.update { it.copy(isMuted = true,
                     streamState = if (it.streamState == StreamState.Error) StreamState.Error else StreamState.Idle) }

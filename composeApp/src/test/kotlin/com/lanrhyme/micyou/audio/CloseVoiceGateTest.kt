@@ -26,7 +26,7 @@ class CloseVoiceGateTest {
         val pcm = process(gate, 5000)
         assertTrue(gate.isOpen)
         assertTrue(pcm.first() in 1..4999)
-        assertEquals(5000, pcm.last().toInt())
+        assertTrue(pcm.last() in 3900..4999)
     }
 
     @Test fun gateClosesBeforeADelayedQuietRepeat() {
@@ -34,7 +34,7 @@ class CloseVoiceGateTest {
         process(gate, 5000)
         repeat(15) { process(gate, 0) }
         assertFalse(gate.isOpen)
-        assertTrue(process(gate, 300).all { it == 0.toShort() })
+        assertTrue(process(gate, 300).all { kotlin.math.abs(it.toInt()) <= 5 })
     }
 
     @Test fun higherSensitivityCanAdmitAQuieterVoice() {
@@ -49,6 +49,13 @@ class CloseVoiceGateTest {
         val gate = CloseVoiceGate().apply { sensitivity = 1f }
         assertTrue(process(gate, 50).all { it == 50.toShort() })
         gate.reset()
+        assertFalse(gate.isOpen)
+    }
+
+    @Test fun borderlineRoomNoiseCannotHoldTheGateOpenIndefinitely() {
+        val gate = CloseVoiceGate()
+        process(gate, 5000)
+        repeat(15) { process(gate, 700) }
         assertFalse(gate.isOpen)
     }
 }

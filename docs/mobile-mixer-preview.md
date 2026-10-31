@@ -29,7 +29,8 @@ official app. The desktop 2.1.1 wire protocol is unchanged.
   room pickup. It acts before output gain, so boosting microphone volume does
   not also lower the pickup threshold. At 100% it bypasses this gate.
 - The gate uses an approximately -31.5 dBFS opening threshold at its initial
-  setting, hysteresis, a 60 ms quiet hold, 4 ms attack and 15 ms release. It
+  setting, hysteresis, a 60 ms quiet hold, and smooth 6 ms attack / 20 ms release
+  envelopes. Borderline input cannot hold it open for more than 120 ms. It
   measures input level, not physical distance. A loud nearby speaker can still
   exceed the threshold.
 - The connection panel retains an optional **Echo cancellation** experiment,
@@ -126,9 +127,12 @@ server, USB transport, and HDMI output:
   voice session and the master output retained their previous levels.
 - An out-of-range bridge request was rejected without changing the music level.
 
-The direct Bluetooth build has 21 unit tests and a debug build. Five close-pickup
+The direct Bluetooth build has 24 unit tests and a debug build. Six close-pickup
 tests cover rejecting quiet input even with output gain, smooth voice onset,
-closing before a delayed quiet repeat, sensitivity adjustment and bypass.
+closing before a delayed quiet repeat, borderline noise, sensitivity adjustment
+and bypass. Two conditioner tests check DC removal, rumble reduction and speech
+band preservation. The default path also enables Android noise suppression
+when available, and removes DC/rumble with an 85 Hz high-pass before the gate.
 Two native
 Android tests check delayed-echo suppression and preservation of a voice signal
 without echo. They run without microphone recordings or speaker output:
@@ -171,8 +175,12 @@ resolve repetitions in the actual room. The user requested close-pickup control
 instead. This is now the normal Bluetooth path, with the unproven AEC experiment
 optional. Start with sensitivity 30%, microphone gain around 100%, speaker
 volume 27% and added echo zero. With sensitivity set to 20%, the user reported
-the result was much better, with residual fizz/crackle still present. Full
-sound-quality acceptance and an acoustic latency comparison remain unverified.
+the result was much better, with residual fizz/crackle still present. After
+the smoother gate, DC/rumble filtering and Android noise suppression update,
+the user again reported a large improvement, while still preferring wired
+sound. The final phone settings were sensitivity about 15%, microphone gain
+about 100%, added echo zero and optional AEC off. The user selected Normal
+mode. No numeric acoustic latency comparison was measured.
 Release shrinking (`:composeApp:minifyReleaseWithR8`) also passes; no release
 was installed or published.
 See `samsung-wireless-audio-research.md` for the SDK investigation.
