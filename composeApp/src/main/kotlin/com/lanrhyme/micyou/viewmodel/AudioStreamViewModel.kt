@@ -27,6 +27,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import com.lanrhyme.micyou.audio.MicrophoneMixer
+import com.lanrhyme.micyou.network.PcMixerClient
 import com.lanrhyme.micyou.audio.AudioEngine
 import com.lanrhyme.micyou.audio.AudioFormat
 import com.lanrhyme.micyou.audio.ChannelCount
@@ -60,6 +64,8 @@ data class AudioStreamUiState(
     val isMuted: Boolean = true,
     val pushToTalkEnabled: Boolean = true,
     val microphoneGain: Float = 1f,
+    val musicGain: Float = 1f,
+    val pcMusicAvailable: Boolean = false,
     val microphoneEcho: Float = 0f,
     val microphoneEchoDelay: Float = 120f,
     val isAutoConfig: Boolean = true,
@@ -107,10 +113,26 @@ class AudioStreamViewModel : ViewModel() {
     private val settings = SettingsFactory.getSettings()
     private var isStartStreamRequestPending = false
     private var isStopStreamRequestPending = false
+    private var musicUpdateJob: Job? = null
 
     init {
         loadSettings()
         setupAudioEngineObservers()
+        auxiliaryScope.launch {
+            while (isActive) {
+                if (_uiState.value.mode == ConnectionMode.Usb && musicUpdateJob?.isActive != true) {
+                    runCatching { PcMixerClient.request() }.onSuccess { status ->
+                        if (musicUpdateJob?.isActive != true) {
+                            _uiState.update { it.copy(musicGain = status.music, pcMusicAvailable = status.available) }
+                        }
+                    }.onFailure {
+                        if (it is kotlinx.coroutines.CancellationException) throw it
+                        _uiState.update { state -> state.copy(pcMusicAvailable = false) }
+                    }
+                }
+                delay(1500)
+            }
+        }
         if (_uiState.value.mode == ConnectionMode.Wifi) {
             discoveryManager.startDiscovery()
         }
@@ -219,10 +241,26 @@ class AudioStreamViewModel : ViewModel() {
     }
 
     fun setMicrophoneGain(value: Float) {
-        val level = (if (value.isFinite()) value else 1f).coerceIn(0f, 2f)
+        val level = (if (value.isFinite()) value else 1f).coerceIn(0f, MicrophoneMixer.MAX_GAIN)
         _audioEngine.setMicrophoneGain(level)
         _uiState.update { it.copy(microphoneGain = level) }
         settings.putFloat("microphone_gain", level)
+    }
+
+    fun setMusicGain(value: Float) {
+        if (!value.isFinite() || !_uiState.value.pcMusicAvailable) return
+        val level = value.coerceIn(0f, 1f)
+        _uiState.update { it.copy(musicGain = level) }
+        musicUpdateJob?.cancel()
+        musicUpdateJob = auxiliaryScope.launch {
+            delay(80)
+            runCatching { PcMixerClient.request(level) }.onSuccess { status ->
+                _uiState.update { it.copy(musicGain = status.music, pcMusicAvailable = status.available) }
+            }.onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                _uiState.update { state -> state.copy(pcMusicAvailable = false) }
+            }
+        }
     }
 
     fun setMicrophoneEcho(value: Float) {

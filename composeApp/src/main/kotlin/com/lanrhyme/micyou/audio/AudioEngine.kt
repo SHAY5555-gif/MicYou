@@ -382,7 +382,7 @@ class AudioEngine constructor() {
         }
     }
 
-    fun setMicrophoneGain(value: Float) { microphoneMixer.gain = value.coerceIn(0f, 2f) }
+    fun setMicrophoneGain(value: Float) { microphoneMixer.gain = value.coerceIn(0f, MicrophoneMixer.MAX_GAIN) }
     fun setMicrophoneEcho(value: Float) { microphoneMixer.echoLevel = value.coerceIn(0f, 0.5f) }
     fun setMicrophoneEchoDelay(value: Float) { microphoneMixer.echoDelayMs = value.coerceIn(50f, 450f) }
 

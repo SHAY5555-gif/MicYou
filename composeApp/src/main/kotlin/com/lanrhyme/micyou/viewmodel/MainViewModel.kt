@@ -86,6 +86,8 @@ data class AppUiState(
     val isMuted: Boolean = true,
     val pushToTalkEnabled: Boolean = true,
     val microphoneGain: Float = 1f,
+    val musicGain: Float = 1f,
+    val pcMusicAvailable: Boolean = false,
     val microphoneEcho: Float = 0f,
     val microphoneEchoDelay: Float = 120f,
     val isAutoConfig: Boolean = true,
@@ -218,6 +220,8 @@ class MainViewModel : ViewModel() {
                         isMuted = audioState.isMuted,
                         pushToTalkEnabled = audioState.pushToTalkEnabled,
                         microphoneGain = audioState.microphoneGain,
+                        musicGain = audioState.musicGain,
+                        pcMusicAvailable = audioState.pcMusicAvailable,
                         microphoneEcho = audioState.microphoneEcho,
                         microphoneEchoDelay = audioState.microphoneEchoDelay,
                         isAutoConfig = audioState.isAutoConfig,
@@ -264,6 +268,7 @@ class MainViewModel : ViewModel() {
     fun setPushToTalkPressed(pressed: Boolean) = audioStreamViewModel.setPushToTalkPressed(pressed)
     fun setPushToTalkEnabled(enabled: Boolean) = audioStreamViewModel.setPushToTalkEnabled(enabled)
     fun setMicrophoneGain(value: Float) = audioStreamViewModel.setMicrophoneGain(value)
+    fun setMusicGain(value: Float) = audioStreamViewModel.setMusicGain(value)
     fun setMicrophoneEcho(value: Float) = audioStreamViewModel.setMicrophoneEcho(value)
     fun setMicrophoneEchoDelay(value: Float) = audioStreamViewModel.setMicrophoneEchoDelay(value)
     fun startStream() = audioStreamViewModel.startStream()

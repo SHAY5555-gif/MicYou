@@ -410,4 +410,6 @@
     <string name="normalReady">Tap once to turn the microphone on.</string>
     <string name="normalLive">Microphone is on. Tap again to mute.</string>
     <string name="normalConnectFirst">Connect first, then tap to turn the microphone on.</string>
+    <string name="mixerMusic">Music (PC)</string>
+    <string name="mixerMusicHint">Open the music player on the PC to control its level over USB.</string>
 </resources>

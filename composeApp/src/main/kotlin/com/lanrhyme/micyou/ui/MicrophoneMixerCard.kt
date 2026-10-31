@@ -20,6 +20,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.lanrhyme.micyou.R
+import com.lanrhyme.micyou.audio.MicrophoneMixer
 import com.lanrhyme.micyou.viewmodel.AppUiState
 import com.lanrhyme.micyou.viewmodel.MainViewModel
 import com.lanrhyme.micyou.viewmodel.StreamState
@@ -72,8 +73,14 @@ fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
             Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MixerFader(
                     stringResource(R.string.mixerVolume), "${(state.microphoneGain * 100).roundToInt()}%",
-                    state.microphoneGain, 0f..2f, "0", "200%", Color(0xFFBAE28B),
+                    state.microphoneGain, 0f..MicrophoneMixer.MAX_GAIN, "0", "600%", Color(0xFFBAE28B),
                     Modifier.weight(1f).fillMaxHeight(), compact, viewModel::setMicrophoneGain
+                )
+                MixerFader(
+                    stringResource(R.string.mixerMusic), "${(state.musicGain * 100).roundToInt()}%",
+                    state.musicGain, 0f..1f, "0", "100%", Color(0xFFEBA5B3),
+                    Modifier.weight(1f).fillMaxHeight(), compact,
+                    onChange = viewModel::setMusicGain, enabled = state.pcMusicAvailable
                 )
                 MixerFader(
                     stringResource(R.string.mixerEcho), "${(state.microphoneEcho * 100).roundToInt()}%",
@@ -86,7 +93,7 @@ fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
                     Modifier.weight(1f).fillMaxHeight(), compact, viewModel::setMicrophoneEchoDelay
                 )
             }
-            Text(stringResource(R.string.mixerFaderHint), color = Color(0xFFB6C3B5),
+            Text(stringResource(if (state.pcMusicAvailable) R.string.mixerFaderHint else R.string.mixerMusicHint), color = Color(0xFFB6C3B5),
                 style = MaterialTheme.typography.bodySmall)
             Surface(
                 modifier = Modifier.fillMaxWidth().height(if (compact) 64.dp else 76.dp)

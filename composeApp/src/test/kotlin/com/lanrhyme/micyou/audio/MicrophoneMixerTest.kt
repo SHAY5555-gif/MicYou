@@ -27,11 +27,27 @@ class MicrophoneMixerTest {
         assertTrue(silence.all { it == 0.toShort() })
     }
 
-    @Test fun loudInputSaturatesWithoutWrappingPolarity() {
+    @Test fun loudInputIsLimitedWithoutWrappingPolarity() {
         val mixer = MicrophoneMixer().apply { gain = 2f }
         val samples = shortArrayOf(30000, -30000)
         mixer.process(samples, samples.size, 48000, 1)
-        assertArrayEquals(shortArrayOf(32767, -32768), samples)
+        assertTrue(samples[0] > 0 && samples[0] <= MicrophoneMixer.LIMITER_CEILING)
+        assertTrue(samples[1] < 0 && -samples[1].toInt() <= MicrophoneMixer.LIMITER_CEILING)
+    }
+
+    @Test fun quietVoiceCanBeBoostedSixfold() {
+        val mixer = MicrophoneMixer().apply { gain = 6f }
+        val samples = shortArrayOf(1000, -1000)
+        mixer.process(samples, samples.size, 48000, 1)
+        assertArrayEquals(shortArrayOf(6000, -6000), samples)
+    }
+
+    @Test fun stereoLimiterPreservesChannelBalance() {
+        val mixer = MicrophoneMixer().apply { gain = 6f }
+        val samples = shortArrayOf(20000, 10000)
+        mixer.process(samples, samples.size, 48000, 2)
+        assertTrue(kotlin.math.abs(samples[0].toInt() - samples[1].toInt() * 2) <= 1)
+        assertTrue(samples[0] <= MicrophoneMixer.LIMITER_CEILING)
     }
 
     @Test fun zeroVolumeAlsoMutesAnExistingEchoTail() {

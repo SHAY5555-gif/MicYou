@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -48,7 +49,8 @@ fun MixerFader(
     accent: Color,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
-    onChange: (Float) -> Unit
+    onChange: (Float) -> Unit,
+    enabled: Boolean = true
 ) {
     val latestOnChange by rememberUpdatedState(onChange)
     var trackHeight by remember { mutableFloatStateOf(0f) }
@@ -59,7 +61,7 @@ fun MixerFader(
     val thumbTop = travel * (1f - fraction)
 
     Column(
-        modifier.background(Color(0xFF171D19), RoundedCornerShape(14.dp))
+        modifier.alpha(if (enabled) 1f else 0.45f).background(Color(0xFF171D19), RoundedCornerShape(14.dp))
             .border(1.dp, Color(0xFF3B453D), RoundedCornerShape(14.dp))
             .padding(horizontal = 8.dp, vertical = if (compact) 6.dp else 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -90,11 +92,12 @@ fun MixerFader(
                     stateDescription = display
                     progressBarRangeInfo = ProgressBarRangeInfo(value, range)
                     setProgress { requested ->
-                        latestOnChange(requested.coerceIn(range))
-                        true
+                        if (enabled) latestOnChange(requested.coerceIn(range))
+                        enabled
                     }
                 }
-                .pointerInput(range, thumbPx) {
+                .pointerInput(range, thumbPx, enabled) {
+                    if (!enabled) return@pointerInput
                     fun updateAt(y: Float) {
                         val usableHeight = (trackHeight - thumbPx).coerceAtLeast(1f)
                         val position = ((y - thumbPx / 2f) / usableHeight).coerceIn(0f, 1f)
