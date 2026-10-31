@@ -168,6 +168,7 @@
     <string name="missingOn">缺少于</string>
     <string name="modeUsb">通用串行总线式</string>
     <string name="modeWifi">无线保真度</string>
+    <string name="modeWifiPc">无线保真度（电脑）</string>
     
     <string name="muteLabel">静默化</string>
     <string name="newVersionReleased">新版本发布了</string>
@@ -381,4 +382,36 @@
     
     <string name="firstLaunchDownloadPc">下载电脑终端项</string>
     <string name="errorSuggestionCheckSettings">检查系统设定中的应用程式权限项</string>
+    <string name="pttHold">Hold to talk</string>
+    <string name="pttTalking">Talking - release to mute</string>
+    <string name="pttConnect">Connect microphone</string>
+    <string name="pttDisconnect">Disconnect</string>
+    <string name="pttReady">Connected. Audio is sent only while the talk button is held.</string>
+    <string name="pttConnectFirst">Connect first, then hold the talk button.</string>
+    <string name="pttIdleNote">Push to talk</string>
+    <string name="mixerVolume">Microphone volume</string>
+    <string name="mixerEcho">Echo level</string>
+    <string name="mixerDelay">Echo delay</string>
+    <string name="mixerEchoHint">0% adds no echo. Sound returning from the room is controlled separately by the desktop echo canceller.</string>
+    <string name="mixerConsoleTitle">Mixer</string>
+    <string name="mixerFaderHint">Slide up to raise, down to lower.</string>
+    <string name="microphoneModeNormal">Normal</string>
+    <string name="normalStart">Turn microphone on</string>
+    <string name="normalMute">Mute microphone</string>
+    <string name="normalReady">Tap once to turn the microphone on.</string>
+    <string name="normalLive">Microphone is on. Tap again to mute.</string>
+    <string name="normalConnectFirst">Connect first, then tap to turn the microphone on.</string>
+    <string name="mixerMusic">Music (PC)</string>
+    <string name="mixerMusicHint">Open the music player on the PC to control its level over USB.</string>
+    <string name="modeBluetooth">Bluetooth</string>
+    <string name="bluetoothStart">Connect Bluetooth</string>
+    <string name="bluetoothEchoCancellation">回声消除</string>
+    <string name="microphoneSensitivity">灵敏度</string>
+    <string name="nearVoiceWaiting">请靠近手机说话</string>
+    <string name="bluetoothSettings">Bluetooth settings</string>
+    <string name="bluetoothConnectFirst">Connect your soundbar in Bluetooth settings, then return here. No computer is needed.</string>
+    <string name="bluetoothRouteFailed">Could not route audio to the Bluetooth speaker. Connect it and try again.</string>
+    <string name="bluetoothRouteLost">Bluetooth speaker disconnected. Microphone stopped.</string>
+    <string name="bluetoothSpeakerVolume">Speaker</string>
+    <string name="bluetoothLocalHint">Lower sensitivity reduces distant sound pickup.</string>
 </resources>

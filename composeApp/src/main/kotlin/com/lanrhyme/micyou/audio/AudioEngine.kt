@@ -328,12 +328,13 @@ class AudioEngine constructor() {
         private fun getActiveEngine(): AudioEngine? = activeEngineOwner.get()
 
         fun requestDisconnectFromNotification() {
+            BluetoothMicrophoneEngine.requestStop()
             getActiveEngine()?.stop()
         }
 
         fun isStreaming(): Boolean {
             val state = getActiveEngine()?.currentStreamState()
-            return state == StreamState.Streaming || state == StreamState.Connecting
+            return BluetoothMicrophoneEngine.isActive() || state == StreamState.Streaming || state == StreamState.Connecting
         }
     }
     private val _state = MutableStateFlow(StreamState.Idle)
@@ -348,8 +349,43 @@ class AudioEngine constructor() {
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: Flow<String?> = _lastError
 
-    private val _isMuted = MutableStateFlow(false)
+    private val _isMuted = MutableStateFlow(true)
     val isMuted: Flow<Boolean> = _isMuted
+
+    private val microphoneGate = MicrophoneGate()
+    private val microphoneMixer = MicrophoneMixer()
+    private val muteSendMutex = Mutex()
+
+    fun setPushToTalkPressed(pressed: Boolean) {
+        if (microphoneGate.setPressed(pressed, _state.value == StreamState.Streaming)) {
+            publishMicrophoneMute()
+        }
+    }
+
+    fun setPushToTalkEnabled(enabled: Boolean) {
+        if (microphoneGate.setMode(enabled)) publishMicrophoneMute()
+    }
+
+    private fun resetMicrophoneGate() {
+        microphoneGate.reset()
+        publishMicrophoneMute()
+    }
+
+    private fun publishMicrophoneMute() {
+        _isMuted.value = microphoneGate.isMuted
+        if (microphoneGate.isMuted) microphoneMixer.reset()
+        lifecycleScope.launch {
+            muteSendMutex.withLock {
+                runCatching {
+                    sendChannel?.send(MessageWrapper(mute = MuteMessage(_isMuted.value)))
+                }
+            }
+        }
+    }
+
+    fun setMicrophoneGain(value: Float) { microphoneMixer.gain = value.coerceIn(0f, MicrophoneMixer.MAX_GAIN) }
+    fun setMicrophoneEcho(value: Float) { microphoneMixer.echoLevel = value.coerceIn(0f, 0.5f) }
+    fun setMicrophoneEchoDelay(value: Float) { microphoneMixer.echoDelayMs = value.coerceIn(50f, 450f) }
 
     private data class StopResources(
         val sessionJob: Job?,
@@ -429,6 +465,7 @@ class AudioEngine constructor() {
     ) {
         if (!isClient) return
         check(!closed.get()) { "AudioEngine is closed" }
+        resetMicrophoneGate()
         Logger.i("AudioEngine", "Starting Android AudioEngine: mode=$mode, protocol=$transportProtocol, ip=$ip, port=$port, sampleRate=${sampleRate.value}, channels=${channelCount.label}, format=${audioFormat.label}")
         _lastError.value = null
 
@@ -725,6 +762,7 @@ class AudioEngine constructor() {
                         val writerJob = launch {
                             Logger.d("AudioEngine", "Writer loop started")
                             for (msg in channel) {
+                                if (msg.audioPacket != null && !microphoneGate.isTransmitting) continue
                                 try {
                                     // 根据传输协议决定发送方式
                                     val shouldUseUdp = when (transportProtocol) {
@@ -789,7 +827,9 @@ class AudioEngine constructor() {
                                             try {
                                                 val wrapper = proto.decodeFromByteArray(MessageWrapper.serializer(), packetBytes)
                                                 if (wrapper.mute != null) {
-                                                    _isMuted.value = wrapper.mute.isMuted
+                                                    microphoneGate.setMuted(wrapper.mute.isMuted, _state.value == StreamState.Streaming)
+                                                    _isMuted.value = microphoneGate.isMuted
+                                                    if (microphoneGate.isMuted) microphoneMixer.reset()
                                                     Logger.i("AudioEngine", "Received Mute Command: ${wrapper.mute.isMuted}")
                                                 }
 
@@ -911,9 +951,10 @@ class AudioEngine constructor() {
                                 _audioLevels.value = levelData.rms
                                 _audioLevelData.value = levelData
 
-                                if (!_isMuted.value) {
+                                if (microphoneGate.isTransmitting) {
                                     // 把采集到的 PCM（8bit/16bit/float）统一转成 16-bit Short 并累积。
                                     val shortsIn = convertPcmToShort(audioData, resolvedAudioFormat.captureFormat, pcmShortBuf)
+                                    microphoneMixer.process(pcmShortBuf, shortsIn, opusSampleRate, opusChannels)
                                     var idx = 0
                                     while (idx < shortsIn && opusPendingSamples < opusPcmAccumulator.size) {
                                         opusPcmAccumulator[opusPendingSamples++] = pcmShortBuf[idx++]
@@ -921,7 +962,7 @@ class AudioEngine constructor() {
 
                                     // 每凑满 20ms 帧就编码并发送一个 Opus 包。
                                     val frameSizePerChannel = opusFrameSamples * opusChannels
-                                    while (opusPendingSamples >= frameSizePerChannel) {
+                                    while (opusPendingSamples >= frameSizePerChannel && microphoneGate.isTransmitting) {
                                         val encodedLen = opusEncoder.encode(opusPcmAccumulator, 0, opusFrameSamples, opusEncodedBuf, 0, opusEncodedBuf.size)
                                         val encoded = opusEncodedBuf.copyOf(encodedLen)
 
@@ -992,6 +1033,8 @@ class AudioEngine constructor() {
                                 } else {
                                     // 静音时丢弃累积的 PCM，避免恢复后把静音前的残留音频发出去。
                                     opusPendingSamples = 0
+                                    fecGroupBuffer.clear()
+                                    fecGroupStartSeq = sequenceNumber
                                 }
                             }
                         }
@@ -1077,6 +1120,7 @@ class AudioEngine constructor() {
                             if (automaticGainControl === sessionAutomaticGainControl) automaticGainControl = null
                             if (job === sessionJobIdentity) job = null
                             if (lifecycleGeneration == sessionGeneration) {
+                                resetMicrophoneGate()
                                 if (_state.value != StreamState.Error) _state.value = StreamState.Idle
                             }
                         }
@@ -1281,6 +1325,7 @@ class AudioEngine constructor() {
     }
 
     private suspend fun stopAndWaitLocked(userInitiated: Boolean): Boolean {
+        resetMicrophoneGate()
         var pendingResources: StopResources? = null
         val pendingCompletion = startStopMutex.withLock {
             stopTimedOutJob?.also {
@@ -1478,14 +1523,8 @@ class AudioEngine constructor() {
     }
 
     suspend fun setMute(muted: Boolean) {
-        _isMuted.value = muted
-        if (_state.value == StreamState.Streaming || _state.value == StreamState.Connecting) {
-             try {
-                 sendChannel?.send(MessageWrapper(mute = MuteMessage(muted)))
-             } catch (e: Exception) {
-                 Logger.e("AudioEngine", "Failed to send mute message: ${e.message}")
-             }
-        }
+        microphoneGate.setMuted(muted, _state.value == StreamState.Streaming)
+        publishMicrophoneMute()
     }
 
     fun setAudioSource(sourceName: String) {

@@ -49,6 +49,7 @@ android {
         targetSdk = (if (androidCompat) libs.versions.compat.android.targetSdk.get() else libs.versions.android.targetSdk.get()).toInt()
         versionCode = project.property("project.version.code").toString().toInt()
         versionName = project.property("project.version").toString()
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "AIFADIAN_API_TOKEN", "\"$aifadianApiToken\"")
         buildConfigField("String", "AIFADIAN_USER_ID", "\"$aifadianUserId\"")
 
@@ -98,11 +99,15 @@ android {
         }
     }
     buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".ptt"
+            versionNameSuffix = "-ptt"
+        }
         getByName("release") {
             isMinifyEnabled = if (androidCompat) false else true
             isShrinkResources = if (androidCompat) false else true
             if (!androidCompat) {
-                proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+                proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "aec3-proguard-rules.pro")
             }
 
             if (hasReleaseSigning) {
@@ -195,6 +200,10 @@ if (androidCompat) {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("junit:junit:4.13.2")
+    implementation("cn.enaium.webrtc.aec3:webrtc-aec3-kmp:1.0.3")
     if (androidCompat) {
         // 兼容模式：MultiDex 库 + core library desugaring
         implementation("androidx.multidex:multidex:${libs.versions.compat.multidex.get()}")

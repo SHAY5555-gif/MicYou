@@ -47,7 +47,8 @@ import com.lanrhyme.micyou.viewmodel.ConnectionMode
 import com.lanrhyme.micyou.viewmodel.UpdateDownloadState
 enum class ConnectionMode(val label: String) {
     Wifi("Wi-Fi"),
-    Usb("USB (ADB)")
+    Usb("USB (ADB)"),
+    Bluetooth("Bluetooth direct")
 }
 
 enum class TransportProtocol(val label: String) {
@@ -83,7 +84,18 @@ data class AppUiState(
     val sampleRate: SampleRate = SampleRate.Rate48000,
     val channelCount: ChannelCount = ChannelCount.Stereo,
     val audioFormat: AudioFormat = AudioFormat.PCM_FLOAT,
-    val isMuted: Boolean = false,
+    val isMuted: Boolean = true,
+    val pushToTalkEnabled: Boolean = true,
+    val microphoneGain: Float = 1f,
+    val musicGain: Float = 1f,
+    val pcMusicAvailable: Boolean = false,
+    val bluetoothDeviceName: String = "",
+    val speakerGain: Float = 0.5f,
+    val bluetoothEchoCancellation: Boolean = false,
+    val microphoneSensitivity: Float = 0.3f,
+    val voiceDetected: Boolean = false,
+    val microphoneEcho: Float = 0f,
+    val microphoneEchoDelay: Float = 120f,
     val isAutoConfig: Boolean = true,
 
     // Error Dialog State
@@ -212,6 +224,17 @@ class MainViewModel : ViewModel() {
                         channelCount = audioState.channelCount,
                         audioFormat = audioState.audioFormat,
                         isMuted = audioState.isMuted,
+                        pushToTalkEnabled = audioState.pushToTalkEnabled,
+                        microphoneGain = audioState.microphoneGain,
+                        musicGain = audioState.musicGain,
+                        pcMusicAvailable = audioState.pcMusicAvailable,
+                        bluetoothDeviceName = audioState.bluetoothDeviceName,
+                        speakerGain = audioState.speakerGain,
+                        bluetoothEchoCancellation = audioState.bluetoothEchoCancellation,
+                        microphoneSensitivity = audioState.microphoneSensitivity,
+                        voiceDetected = audioState.voiceDetected,
+                        microphoneEcho = audioState.microphoneEcho,
+                        microphoneEchoDelay = audioState.microphoneEchoDelay,
                         isAutoConfig = audioState.isAutoConfig,
                         showErrorDialog = audioState.showErrorDialog,
                         errorDetails = audioState.errorDetails,
@@ -253,6 +276,15 @@ class MainViewModel : ViewModel() {
     // Audio Stream methods
     fun toggleStream() = audioStreamViewModel.toggleStream()
     fun toggleMute() = audioStreamViewModel.toggleMute()
+    fun setPushToTalkPressed(pressed: Boolean) = audioStreamViewModel.setPushToTalkPressed(pressed)
+    fun setPushToTalkEnabled(enabled: Boolean) = audioStreamViewModel.setPushToTalkEnabled(enabled)
+    fun setMicrophoneGain(value: Float) = audioStreamViewModel.setMicrophoneGain(value)
+    fun setMusicGain(value: Float) = audioStreamViewModel.setMusicGain(value)
+    fun setSpeakerGain(value: Float) = audioStreamViewModel.setSpeakerGain(value)
+    fun setBluetoothEchoCancellation(enabled: Boolean) = audioStreamViewModel.setBluetoothEchoCancellation(enabled)
+    fun setMicrophoneSensitivity(value: Float) = audioStreamViewModel.setMicrophoneSensitivity(value)
+    fun setMicrophoneEcho(value: Float) = audioStreamViewModel.setMicrophoneEcho(value)
+    fun setMicrophoneEchoDelay(value: Float) = audioStreamViewModel.setMicrophoneEchoDelay(value)
     fun startStream() = audioStreamViewModel.startStream()
     fun stopStream() = audioStreamViewModel.stopStream()
     fun setMode(mode: ConnectionMode) = audioStreamViewModel.setMode(mode)

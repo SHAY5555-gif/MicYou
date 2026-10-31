@@ -1,3 +1,23 @@
+# MicYou Mixer
+
+基于 [MicYou](https://github.com/MicYou-Dev/MicYou) 2.1.1 的非官方 Android 混音器预览版，保留上游许可证与署名。
+
+**[下载 Android APK](https://github.com/SHAY5555-gif/MicYou/releases/tag/mixer-preview-2026.10.31)** · **[使用与测试说明](docs/mobile-mixer-preview.md)** · **[无线音频调查](docs/samsung-wireless-audio-research.md)**
+
+- **Bluetooth 直连**：手机麦克风直接播放到配对的蓝牙音箱，不需要电脑。
+- **Push to talk / Normal**：按住说话或单击开启持续拾音，重新连接从静音开始。
+- **垂直推子**：独立控制拾音灵敏度、麦克风音量、音箱音量、附加回声与延迟。
+- **近距离拾音**：降低 Sensitivity 可以减少较安静的远处声音；提高 Microphone volume 不会同时降低拾音门限。
+- **声音处理**：平滑门控、降噪、低频过滤、峰值限制，以及保留的 USB / Wi-Fi 到电脑模式。
+
+先在 Android 蓝牙设置中连接音箱，再选择 **Bluetooth → Connect Bluetooth**。可从 **Sensitivity 15%**、**Microphone volume 100%**、**Echo level 0%** 开始调整。门限依据声音强弱，并不直接测量距离。
+
+此 APK 使用调试签名，应用名称为 **MicYou Mixer**，包名为 `com.lanrhyme.micyou.ptt`，可以与官方应用共存。已在实体 Samsung SM-F9710 与 Q70T 上试听；其他设备的表现需要验证。Bluetooth 仍有固有延迟，不能保证与有线连接相同。直连音箱的 Wi-Fi 音频传输尚未实现。
+
+以下为保留的上游项目说明。
+
+---
+
 <div align="center">
   
   <h1>MicYou</h1>

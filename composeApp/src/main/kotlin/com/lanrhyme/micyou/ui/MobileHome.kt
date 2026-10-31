@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.Extension
@@ -82,6 +83,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -115,6 +117,9 @@ import com.lanrhyme.micyou.ui.compose.haze.rememberHazeState
 import kotlinx.coroutines.delay
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.min
@@ -137,6 +142,19 @@ import com.lanrhyme.micyou.viewmodel.VisualizerStyle
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MobileHome(viewModel: MainViewModel) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                viewModel.setPushToTalkPressed(false)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            viewModel.setPushToTalkPressed(false)
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
     val state by viewModel.uiState.collectAsState()
     val audioLevel by viewModel.audioLevels.collectAsState(initial = 0f)
     
@@ -167,9 +185,16 @@ fun MobileHome(viewModel: MainViewModel) {
         }
     }
 
+    LaunchedEffect(state.streamState, state.errorMessage) {
+        if (state.mode == ConnectionMode.Bluetooth && state.streamState == StreamState.Error) {
+            state.errorMessage?.let { snackbarHostState.showSnackbar(it) }
+        }
+    }
+
     val focusManager = LocalFocusManager.current
     LaunchedEffect(showSettings) {
         if (showSettings) {
+            viewModel.setPushToTalkPressed(false)
             focusManager.clearFocus()
         }
     }
@@ -207,17 +232,19 @@ fun MobileHome(viewModel: MainViewModel) {
                     )
                 }
 
-                // Connection config
-                AnimatedCardVisibility(
-                    visible = contentVisible,
-                    delayMillis = 150
-                ) {
-                    ConnectionConfigCard(
-                        state = state,
-                        viewModel = viewModel,
-                                                cardOpacity = state.backgroundSettings.cardOpacity,
-                        hazeState = hazeState
-                    )
+                // Keep the full mixer visible once the connection is established.
+                if (state.streamState != StreamState.Streaming) {
+                    AnimatedCardVisibility(
+                        visible = contentVisible,
+                        delayMillis = 150
+                    ) {
+                        ConnectionConfigCard(
+                            state = state,
+                            viewModel = viewModel,
+                            cardOpacity = state.backgroundSettings.cardOpacity,
+                            hazeState = hazeState
+                        )
+                    }
                 }
 
                 // Main control
@@ -226,13 +253,7 @@ fun MobileHome(viewModel: MainViewModel) {
                     delayMillis = 250,
                     modifier = Modifier.weight(1f)
                 ) {
-                    MainControlCard(
-                        state = state,
-                        viewModel = viewModel,
-                        audioLevel = audioLevel,
-                                                cardOpacity = state.backgroundSettings.cardOpacity,
-                        hazeState = hazeState
-                    )
+                    MicrophoneMixerCard(state = state, viewModel = viewModel)
                 }
 
                 // Bottom bar (mute + settings)
@@ -362,7 +383,8 @@ private fun MobileHeaderSection(
                         color = animatedColor
                     )
                     Text(
-                        "${stringResource(R.string.ipLabel)}${"Client"}",
+                        if (state.mode == ConnectionMode.Bluetooth) stringResource(R.string.modeBluetooth)
+                        else "${stringResource(R.string.ipLabel)}${"Client"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -413,18 +435,20 @@ private fun ConnectionConfigCard(
             modifier = Modifier.padding(12.dp).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Mode label
-            Text(
-                stringResource(R.string.connectionModeLabel),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (state.mode != ConnectionMode.Bluetooth) {
+                Text(
+                    stringResource(R.string.connectionModeLabel),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             // Mode selector
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 val modes = listOf(
-                    ConnectionMode.Wifi to (stringResource(R.string.modeWifi) to Icons.Rounded.Wifi),
-                    ConnectionMode.Usb to (stringResource(R.string.modeUsb) to Icons.Rounded.Usb)
+                    ConnectionMode.Wifi to (stringResource(R.string.modeWifiPc) to Icons.Rounded.Wifi),
+                    ConnectionMode.Usb to (stringResource(R.string.modeUsb) to Icons.Rounded.Usb),
+                    ConnectionMode.Bluetooth to (stringResource(R.string.modeBluetooth) to Icons.Rounded.Bluetooth)
                 )
 
                 modes.forEach { (mode, info) ->
@@ -469,6 +493,18 @@ private fun ConnectionConfigCard(
                 }
             }
 
+            if (state.mode == ConnectionMode.Bluetooth) {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                androidx.compose.material3.TextButton(onClick = {
+                    context.startActivity(android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
+                }) { Text(stringResource(R.string.bluetoothSettings)) }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(stringResource(R.string.bluetoothEchoCancellation), style = MaterialTheme.typography.bodySmall)
+                    androidx.compose.material3.Switch(checked = state.bluetoothEchoCancellation,
+                        onCheckedChange = viewModel::setBluetoothEchoCancellation)
+                }
+            }
 
 
             // Discovered devices list (WiFi mode only, always visible during connection)
@@ -561,7 +597,7 @@ private fun ConnectionConfigCard(
 
             // IP/Port input
             AnimatedVisibility(
-                visible = true,
+                visible = state.mode != ConnectionMode.Bluetooth,
                 enter = fadeIn(tween(300)) + expandVertically(),
                 exit = fadeOut(tween(200)) + shrinkVertically()
             ) {
@@ -761,9 +797,15 @@ private fun MobileBottomBar(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MobileMuteButton(
-                    isMuted = state.isMuted,
-                    onToggle = { viewModel.toggleMute() }
+                androidx.compose.material3.FilterChip(
+                    selected = state.pushToTalkEnabled,
+                    onClick = { viewModel.setPushToTalkEnabled(true) },
+                    label = { Text(stringResource(R.string.pttIdleNote)) }
+                )
+                androidx.compose.material3.FilterChip(
+                    selected = !state.pushToTalkEnabled,
+                    onClick = { viewModel.setPushToTalkEnabled(false) },
+                    label = { Text(stringResource(R.string.microphoneModeNormal)) }
                 )
             }
             

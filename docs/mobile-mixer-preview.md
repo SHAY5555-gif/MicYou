@@ -1,0 +1,191 @@
+# Android microphone mixer preview
+
+This preview is based on MicYou 2.1.1. The Android debug app installs as
+`com.lanrhyme.micyou.ptt` with the launcher name **MicYou Mixer**, alongside the
+official app. The desktop 2.1.1 wire protocol is unchanged.
+
+## Controls
+
+- Connect opens the selected USB, Wi-Fi-to-PC, or direct Bluetooth connection
+  in a muted state.
+- For direct Bluetooth, pair the soundbar in Android Bluetooth settings, return
+  to the app, choose **Bluetooth**, and tap **Connect Bluetooth**. The app shows
+  the confirmed output device name. This mode needs no computer or USB cable.
+- Choose **Push to talk** or **Normal** in the bottom bar.
+- Push to talk sends microphone audio only while held. Release, a cancelled
+  gesture, opening settings, or leaving the activity mutes that mode.
+- Normal uses a single tap to turn the microphone on and another tap to mute it.
+  It stays on when the activity goes into the background while connected.
+- Changing modes always mutes the microphone. The mode choice is saved, but
+  reopening a connection starts muted in either mode.
+- Microphone volume ranges from 0% to 600%. Zero also mutes the echo tail.
+- Music (PC) independently adjusts supported Windows music/browser sessions
+  from 0% to 100%, over the optional USB companion bridge below.
+- In direct Bluetooth mode that fader becomes **Speaker**, controlling Android
+  media volume separately from microphone gain.
+- Echo level ranges from 0% to 50%. Zero is dry, without an added echo.
+- Direct Bluetooth has a **Sensitivity** fader, initially 30%. Lower values
+  require a louder input, allowing close speech through while rejecting softer
+  room pickup. It acts before output gain, so boosting microphone volume does
+  not also lower the pickup threshold. At 100% it bypasses this gate.
+- The gate uses an approximately -31.5 dBFS opening threshold at its initial
+  setting, hysteresis, a 60 ms quiet hold, and smooth 6 ms attack / 20 ms release
+  envelopes. Borderline input cannot hold it open for more than 120 ms. It
+  measures input level, not physical distance. A loud nearby speaker can still
+  exceed the threshold.
+- The connection panel retains an optional **Echo cancellation** experiment,
+  off by default. Changing it requires reconnecting.
+- Echo delay ranges from 50 to 450 milliseconds.
+- The controls use vertical console faders. Dragging up increases the
+  value; dragging down decreases it. The displayed number updates immediately.
+- Mixer settings are saved on the phone. Connecting again always starts muted.
+
+The recorder stays warm while connected for quick response in either mode. Muted
+audio is discarded locally instead of being transmitted. Disconnect releases
+the capture session. This is transmission gating, not permission revocation.
+
+The mixer processes PCM before Opus encoding on the PC transports. The direct
+Bluetooth engine sends PCM through Android without Opus or a network server.
+The echo has bounded feedback and is cleared when muted or when a push-to-talk
+hold is released. The PC transports discard muted PCM and pending FEC groups.
+Direct Bluetooth sends silence to keep the output warm and flushes the app's
+playback buffer when muted. It cannot recall audio already buffered by the
+Bluetooth receiver.
+
+Direct Bluetooth normally requests 10 ms capture blocks, 48 kHz mono audio, a
+40 ms initial output buffer and Android low-latency playback where supported.
+Complete blocking writes preserve the input sequence when the output accepts
+only part of a block. Underrun monitoring can enlarge the output buffer within
+its allocated capacity. These settings do not establish the acoustic latency
+of the soundbar. The actual Bluetooth route is checked before transmission and
+during playback; route loss stops the session.
+
+A stereo-linked peak limiter caps boosted PCM at approximately 95% of full
+scale, with immediate attenuation and an 80 ms recovery envelope. It adds no
+look-ahead buffer. High gain can still amplify noise or cause room feedback.
+
+## Optional Windows music control
+
+Start `python tools/windows_music_bridge.py` on Windows and run
+`adb -s DEVICE_SERIAL reverse tcp:8556 tcp:8556`. Keep the existing audio
+transport on port 8554. The music fader needs this companion process and USB;
+it is disabled when the bridge cannot find a supported media session.
+
+The bridge listens only on `127.0.0.1:8556`. Each request is one JSON line,
+limited to 256 bytes. An empty object reads status; `{"music":0.6}` sets 60%.
+Values must be finite numbers from zero to one. Only an explicit list of media
+apps and browsers is adjustable. Master output, system sounds, communication
+apps, and MicYou's voice session are not changed. The control covers all audio
+from a matching browser process, including its other tabs. It does not restart
+automatically after a PC reboot.
+
+Added echo and acoustic feedback are different. The echo slider cannot remove
+sound that travels from a loudspeaker back into the microphone. Keep the desktop
+echo canceller enabled for PC transports and begin with added echo at zero.
+The optional Bluetooth cancellation experiment uses WebRTC AEC3 with its actual
+output as the echo reference, including a history for Bluetooth delay. It uses
+16 kHz voice audio and does not run the desktop AEC7/RNNoise engine. The optional
+Android effects were replaced, since their enabled state did not establish
+effective cancellation for the soundbar. The dependency is pinned to version
+1.0.3 and its working 16 kHz path; a native synthetic test caught ineffective
+cancellation at 48 kHz in that published binary. The normal close-pickup path
+does not enable this optional processor.
+
+## Validation
+
+Build with JDK 21 and the Android SDK required by the repository:
+
+```sh
+./gradlew :composeApp:testDebugUnitTest :composeApp:assembleDebug
+git diff --check
+```
+
+The six mixer tests cover dry processing, zero volume including an existing
+echo tail, delay timing and reset, sixfold boost, peak limiting, and stereo
+balance. Six transmission
+gate tests cover connected presses, release, normal mode latching, explicit
+mute, mode changes, and connection reset. Four PCM writer tests cover partial
+and empty writes, sample ordering, explicit mute, cancellation and errors.
+
+Manual preview checks on a physical SM-F9710 with the official Windows 2.1.1
+server, USB transport, and HDMI output:
+
+- Initial connection reports muted on the server.
+- Holding and releasing produces the matching unmuted and muted server states.
+- Pressing Home during a hold mutes the server before the hold completes.
+- Returning to the activity leaves it muted.
+- In Normal mode a single tap stays unmuted after release and after pressing
+  Home; a second tap mutes it. Changing from an active Normal mode to Push to
+  talk mutes it.
+- A saved Normal choice survives process restart and reconnects muted.
+- All four faders are visible together while connected, with a compact layout
+  when the connection settings occupy part of the phone screen.
+- Dragging each fader in both directions changes its corresponding saved value.
+- Fader changes reach the PCM mixer, and saved values survive process restart
+  and an APK update.
+- The phone music fader changed Chrome's Windows session to 60% while MicYou's
+  voice session and the master output retained their previous levels.
+- An out-of-range bridge request was rejected without changing the music level.
+
+The direct Bluetooth build has 24 unit tests and a debug build. Six close-pickup
+tests cover rejecting quiet input even with output gain, smooth voice onset,
+closing before a delayed quiet repeat, borderline noise, sensitivity adjustment
+and bypass. Two conditioner tests check DC removal, rumble reduction and speech
+band preservation. The default path also enables Android noise suppression
+when available, and removes DC/rumble with an 85 Hz high-pass before the gate.
+Two native
+Android tests check delayed-echo suppression and preservation of a voice signal
+without echo. They run without microphone recordings or speaker output:
+
+```sh
+./gradlew :composeApp:assembleDebugAndroidTest
+adb install -r composeApp/build/outputs/apk/androidTest/debug/composeApp-debug-androidTest.apk
+adb shell am instrument -w com.lanrhyme.micyou.ptt.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+The app has been installed on the physical SM-F9710 and connected to the Q70T:
+
+- Android confirmed the active AudioTrack route as Samsung Soundbar Q70T.
+  The normal close-pickup engine reports 48 kHz, 480-frame input blocks and an
+  initial 1920-frame app output buffer. The optional AEC3 path uses 16 kHz,
+  160-frame blocks and a 640-frame initial output buffer. These are local
+  parameters, not an acoustic latency measurement. The buffer can grow on
+  sustained underruns.
+- Push to talk showed transmitting while held and muted after release.
+- Normal stayed on after the tap and muted on the next tap.
+- Disconnecting only the paired soundbar stopped capture and displayed the
+  route-lost error. Reconnecting succeeded and started muted.
+- The Speaker fader changed Android media volume from 15 to 4 and back to 15,
+  independently of the unchanged microphone gain.
+- All four faders are visible in the disconnected compact layout, with scroll
+  available in shorter windows. A missing Bluetooth connection displays a
+  visible message rather than silently reverting to idle.
+
+The initial connection failed because the soundbar had automatically connected
+to a Samsung Smart Monitor M7. Switching the existing Bluetooth connection to
+the phone through SmartThings resolved it. No pairing was removed.
+The first direct build failed the user's listening test with chopped/robotic
+audio. Its nonblocking output discarded samples when full. The replacement
+preserves partial writes and recorded more than 40 seconds with zero Android
+underruns on the Q70T; explicit mute may discard an in-flight tail by design.
+The user subsequently reported a sustained tone and repeated voice. The
+reference-aware WebRTC AEC3 experiment passed the native synthetic test with
+63.46 dB echo reduction and preserved the independent voice test, but did not
+resolve repetitions in the actual room. The user requested close-pickup control
+instead. This is now the normal Bluetooth path, with the unproven AEC experiment
+optional. Start with sensitivity 30%, microphone gain around 100%, speaker
+volume 27% and added echo zero. With sensitivity set to 20%, the user reported
+the result was much better, with residual fizz/crackle still present. After
+the smoother gate, DC/rumble filtering and Android noise suppression update,
+the user again reported a large improvement, while still preferring wired
+sound. The final phone settings were sensitivity about 15%, microphone gain
+about 100%, added echo zero and optional AEC off. The user selected Normal
+mode. No numeric acoustic latency comparison was measured.
+Release shrinking (`:composeApp:minifyReleaseWithR8`) also passes; no release
+was installed or published.
+See `samsung-wireless-audio-research.md` for the SDK investigation.
+
+The user confirmed sound only while holding the talk button, without duplicated
+voice at zero added echo, before the fader-only UI update. These checks do not
+establish end-to-end acoustic latency or complete acoustic echo cancellation in
+other room configurations or at higher levels.
