@@ -83,7 +83,10 @@ data class AppUiState(
     val sampleRate: SampleRate = SampleRate.Rate48000,
     val channelCount: ChannelCount = ChannelCount.Stereo,
     val audioFormat: AudioFormat = AudioFormat.PCM_FLOAT,
-    val isMuted: Boolean = false,
+    val isMuted: Boolean = true,
+    val microphoneGain: Float = 1f,
+    val microphoneEcho: Float = 0f,
+    val microphoneEchoDelay: Float = 120f,
     val isAutoConfig: Boolean = true,
 
     // Error Dialog State
@@ -212,6 +215,9 @@ class MainViewModel : ViewModel() {
                         channelCount = audioState.channelCount,
                         audioFormat = audioState.audioFormat,
                         isMuted = audioState.isMuted,
+                        microphoneGain = audioState.microphoneGain,
+                        microphoneEcho = audioState.microphoneEcho,
+                        microphoneEchoDelay = audioState.microphoneEchoDelay,
                         isAutoConfig = audioState.isAutoConfig,
                         showErrorDialog = audioState.showErrorDialog,
                         errorDetails = audioState.errorDetails,
@@ -253,6 +259,10 @@ class MainViewModel : ViewModel() {
     // Audio Stream methods
     fun toggleStream() = audioStreamViewModel.toggleStream()
     fun toggleMute() = audioStreamViewModel.toggleMute()
+    fun setPushToTalkPressed(pressed: Boolean) = audioStreamViewModel.setPushToTalkPressed(pressed)
+    fun setMicrophoneGain(value: Float) = audioStreamViewModel.setMicrophoneGain(value)
+    fun setMicrophoneEcho(value: Float) = audioStreamViewModel.setMicrophoneEcho(value)
+    fun setMicrophoneEchoDelay(value: Float) = audioStreamViewModel.setMicrophoneEchoDelay(value)
     fun startStream() = audioStreamViewModel.startStream()
     fun stopStream() = audioStreamViewModel.stopStream()
     fun setMode(mode: ConnectionMode) = audioStreamViewModel.setMode(mode)

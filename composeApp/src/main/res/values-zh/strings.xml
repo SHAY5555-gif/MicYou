@@ -391,4 +391,15 @@
     <string name="qs_toast_stopped">串流已结束</string>
     <string name="firstLaunchDownloadPc">下载电脑端</string>
     <string name="errorSuggestionCheckSettings">检查系统设置中的应用权限</string>
+    <string name="pttHold">Hold to talk</string>
+    <string name="pttTalking">Talking - release to mute</string>
+    <string name="pttConnect">Connect microphone</string>
+    <string name="pttDisconnect">Disconnect</string>
+    <string name="pttReady">Connected. Audio is sent only while the talk button is held.</string>
+    <string name="pttConnectFirst">Connect first, then hold the talk button.</string>
+    <string name="pttIdleNote">Push to talk</string>
+    <string name="mixerVolume">Microphone volume</string>
+    <string name="mixerEcho">Echo level</string>
+    <string name="mixerDelay">Echo delay</string>
+    <string name="mixerEchoHint">0% adds no echo. Sound returning from the room is controlled separately by the desktop echo canceller.</string>
 </resources>

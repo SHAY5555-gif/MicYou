@@ -57,7 +57,10 @@ data class AudioStreamUiState(
     val sampleRate: SampleRate = SampleRate.Rate48000,
     val channelCount: ChannelCount = ChannelCount.Stereo,
     val audioFormat: AudioFormat = defaultAudioFormat(),
-    val isMuted: Boolean = false,
+    val isMuted: Boolean = true,
+    val microphoneGain: Float = 1f,
+    val microphoneEcho: Float = 0f,
+    val microphoneEchoDelay: Float = 120f,
     val isAutoConfig: Boolean = true,
     // Error Dialog State
     val showErrorDialog: Boolean = false,
@@ -113,6 +116,9 @@ class AudioStreamViewModel : ViewModel() {
     }
 
     private fun loadSettings() {
+        setMicrophoneGain(settings.getFloat("microphone_gain", 1f))
+        setMicrophoneEcho(settings.getFloat("microphone_echo", 0f))
+        setMicrophoneEchoDelay(settings.getFloat("microphone_echo_delay", 120f))
         val savedModeName = settings.getString("connection_mode", ConnectionMode.Wifi.name)
     val savedMode = when (savedModeName) {
             "WifiUdp" -> ConnectionMode.Wifi
@@ -200,6 +206,29 @@ class AudioStreamViewModel : ViewModel() {
         auxiliaryScope.launch {
             _audioEngine.setMute(newMuteState)
         }
+    }
+
+    fun setPushToTalkPressed(pressed: Boolean) = _audioEngine.setPushToTalkPressed(pressed)
+
+    fun setMicrophoneGain(value: Float) {
+        val level = (if (value.isFinite()) value else 1f).coerceIn(0f, 2f)
+        _audioEngine.setMicrophoneGain(level)
+        _uiState.update { it.copy(microphoneGain = level) }
+        settings.putFloat("microphone_gain", level)
+    }
+
+    fun setMicrophoneEcho(value: Float) {
+        val level = (if (value.isFinite()) value else 0f).coerceIn(0f, 0.5f)
+        _audioEngine.setMicrophoneEcho(level)
+        _uiState.update { it.copy(microphoneEcho = level) }
+        settings.putFloat("microphone_echo", level)
+    }
+
+    fun setMicrophoneEchoDelay(value: Float) {
+        val delay = (if (value.isFinite()) value else 120f).coerceIn(50f, 450f)
+        _audioEngine.setMicrophoneEchoDelay(delay)
+        _uiState.update { it.copy(microphoneEchoDelay = delay) }
+        settings.putFloat("microphone_echo_delay", delay)
     }
 
     fun startStream() {

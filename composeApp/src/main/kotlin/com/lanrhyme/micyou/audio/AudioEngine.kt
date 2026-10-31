@@ -348,8 +348,29 @@ class AudioEngine constructor() {
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: Flow<String?> = _lastError
 
-    private val _isMuted = MutableStateFlow(false)
+    private val _isMuted = MutableStateFlow(true)
     val isMuted: Flow<Boolean> = _isMuted
+
+    @Volatile private var pushToTalkPressed = false
+    private val microphoneMixer = MicrophoneMixer()
+    private val muteSendMutex = Mutex()
+
+    fun setPushToTalkPressed(pressed: Boolean) {
+        pushToTalkPressed = pressed && _state.value == StreamState.Streaming
+        _isMuted.value = !pushToTalkPressed
+        if (!pushToTalkPressed) microphoneMixer.reset()
+        lifecycleScope.launch {
+            muteSendMutex.withLock {
+                runCatching {
+                    sendChannel?.send(MessageWrapper(mute = MuteMessage(_isMuted.value)))
+                }
+            }
+        }
+    }
+
+    fun setMicrophoneGain(value: Float) { microphoneMixer.gain = value.coerceIn(0f, 2f) }
+    fun setMicrophoneEcho(value: Float) { microphoneMixer.echoLevel = value.coerceIn(0f, 0.5f) }
+    fun setMicrophoneEchoDelay(value: Float) { microphoneMixer.echoDelayMs = value.coerceIn(50f, 450f) }
 
     private data class StopResources(
         val sessionJob: Job?,
@@ -429,6 +450,7 @@ class AudioEngine constructor() {
     ) {
         if (!isClient) return
         check(!closed.get()) { "AudioEngine is closed" }
+        setPushToTalkPressed(false)
         Logger.i("AudioEngine", "Starting Android AudioEngine: mode=$mode, protocol=$transportProtocol, ip=$ip, port=$port, sampleRate=${sampleRate.value}, channels=${channelCount.label}, format=${audioFormat.label}")
         _lastError.value = null
 
@@ -725,6 +747,7 @@ class AudioEngine constructor() {
                         val writerJob = launch {
                             Logger.d("AudioEngine", "Writer loop started")
                             for (msg in channel) {
+                                if (msg.audioPacket != null && !pushToTalkPressed) continue
                                 try {
                                     // 根据传输协议决定发送方式
                                     val shouldUseUdp = when (transportProtocol) {
@@ -789,7 +812,7 @@ class AudioEngine constructor() {
                                             try {
                                                 val wrapper = proto.decodeFromByteArray(MessageWrapper.serializer(), packetBytes)
                                                 if (wrapper.mute != null) {
-                                                    _isMuted.value = wrapper.mute.isMuted
+                                                    _isMuted.value = wrapper.mute.isMuted || !pushToTalkPressed
                                                     Logger.i("AudioEngine", "Received Mute Command: ${wrapper.mute.isMuted}")
                                                 }
 
@@ -911,9 +934,10 @@ class AudioEngine constructor() {
                                 _audioLevels.value = levelData.rms
                                 _audioLevelData.value = levelData
 
-                                if (!_isMuted.value) {
+                                if (!_isMuted.value && pushToTalkPressed) {
                                     // 把采集到的 PCM（8bit/16bit/float）统一转成 16-bit Short 并累积。
                                     val shortsIn = convertPcmToShort(audioData, resolvedAudioFormat.captureFormat, pcmShortBuf)
+                                    microphoneMixer.process(pcmShortBuf, shortsIn, opusSampleRate, opusChannels)
                                     var idx = 0
                                     while (idx < shortsIn && opusPendingSamples < opusPcmAccumulator.size) {
                                         opusPcmAccumulator[opusPendingSamples++] = pcmShortBuf[idx++]
@@ -921,7 +945,7 @@ class AudioEngine constructor() {
 
                                     // 每凑满 20ms 帧就编码并发送一个 Opus 包。
                                     val frameSizePerChannel = opusFrameSamples * opusChannels
-                                    while (opusPendingSamples >= frameSizePerChannel) {
+                                    while (opusPendingSamples >= frameSizePerChannel && pushToTalkPressed) {
                                         val encodedLen = opusEncoder.encode(opusPcmAccumulator, 0, opusFrameSamples, opusEncodedBuf, 0, opusEncodedBuf.size)
                                         val encoded = opusEncodedBuf.copyOf(encodedLen)
 
@@ -992,6 +1016,8 @@ class AudioEngine constructor() {
                                 } else {
                                     // 静音时丢弃累积的 PCM，避免恢复后把静音前的残留音频发出去。
                                     opusPendingSamples = 0
+                                    fecGroupBuffer.clear()
+                                    fecGroupStartSeq = sequenceNumber
                                 }
                             }
                         }
@@ -1281,6 +1307,7 @@ class AudioEngine constructor() {
     }
 
     private suspend fun stopAndWaitLocked(userInitiated: Boolean): Boolean {
+        setPushToTalkPressed(false)
         var pendingResources: StopResources? = null
         val pendingCompletion = startStopMutex.withLock {
             stopTimedOutJob?.also {
@@ -1478,10 +1505,10 @@ class AudioEngine constructor() {
     }
 
     suspend fun setMute(muted: Boolean) {
-        _isMuted.value = muted
+        _isMuted.value = muted || !pushToTalkPressed
         if (_state.value == StreamState.Streaming || _state.value == StreamState.Connecting) {
              try {
-                 sendChannel?.send(MessageWrapper(mute = MuteMessage(muted)))
+                 sendChannel?.send(MessageWrapper(mute = MuteMessage(_isMuted.value)))
              } catch (e: Exception) {
                  Logger.e("AudioEngine", "Failed to send mute message: ${e.message}")
              }

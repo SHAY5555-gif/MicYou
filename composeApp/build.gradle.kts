@@ -98,6 +98,10 @@ android {
         }
     }
     buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".ptt"
+            versionNameSuffix = "-ptt"
+        }
         getByName("release") {
             isMinifyEnabled = if (androidCompat) false else true
             isShrinkResources = if (androidCompat) false else true
@@ -195,6 +199,7 @@ if (androidCompat) {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     if (androidCompat) {
         // 兼容模式：MultiDex 库 + core library desugaring
         implementation("androidx.multidex:multidex:${libs.versions.compat.multidex.get()}")

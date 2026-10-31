@@ -82,6 +82,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -115,6 +116,9 @@ import com.lanrhyme.micyou.ui.compose.haze.rememberHazeState
 import kotlinx.coroutines.delay
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.min
@@ -137,6 +141,19 @@ import com.lanrhyme.micyou.viewmodel.VisualizerStyle
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MobileHome(viewModel: MainViewModel) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                viewModel.setPushToTalkPressed(false)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            viewModel.setPushToTalkPressed(false)
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
     val state by viewModel.uiState.collectAsState()
     val audioLevel by viewModel.audioLevels.collectAsState(initial = 0f)
     
@@ -170,6 +187,7 @@ fun MobileHome(viewModel: MainViewModel) {
     val focusManager = LocalFocusManager.current
     LaunchedEffect(showSettings) {
         if (showSettings) {
+            viewModel.setPushToTalkPressed(false)
             focusManager.clearFocus()
         }
     }
@@ -207,17 +225,19 @@ fun MobileHome(viewModel: MainViewModel) {
                     )
                 }
 
-                // Connection config
-                AnimatedCardVisibility(
-                    visible = contentVisible,
-                    delayMillis = 150
-                ) {
-                    ConnectionConfigCard(
-                        state = state,
-                        viewModel = viewModel,
-                                                cardOpacity = state.backgroundSettings.cardOpacity,
-                        hazeState = hazeState
-                    )
+                // Keep the full mixer visible once the connection is established.
+                if (state.streamState != StreamState.Streaming) {
+                    AnimatedCardVisibility(
+                        visible = contentVisible,
+                        delayMillis = 150
+                    ) {
+                        ConnectionConfigCard(
+                            state = state,
+                            viewModel = viewModel,
+                            cardOpacity = state.backgroundSettings.cardOpacity,
+                            hazeState = hazeState
+                        )
+                    }
                 }
 
                 // Main control
@@ -226,13 +246,7 @@ fun MobileHome(viewModel: MainViewModel) {
                     delayMillis = 250,
                     modifier = Modifier.weight(1f)
                 ) {
-                    MainControlCard(
-                        state = state,
-                        viewModel = viewModel,
-                        audioLevel = audioLevel,
-                                                cardOpacity = state.backgroundSettings.cardOpacity,
-                        hazeState = hazeState
-                    )
+                    MicrophoneMixerCard(state = state, viewModel = viewModel)
                 }
 
                 // Bottom bar (mute + settings)
@@ -761,10 +775,7 @@ private fun MobileBottomBar(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MobileMuteButton(
-                    isMuted = state.isMuted,
-                    onToggle = { viewModel.toggleMute() }
-                )
+                Text(stringResource(R.string.pttIdleNote), style = MaterialTheme.typography.bodySmall)
             }
             
             val dotColor by animateColorAsState(
