@@ -12,6 +12,8 @@ official app. The desktop 2.1.1 wire protocol is unchanged.
 - Microphone volume ranges from 0% to 200%. Zero also mutes the echo tail.
 - Echo level ranges from 0% to 50%. Zero is dry, without an added echo.
 - Echo delay ranges from 50 to 450 milliseconds.
+- The three controls use vertical console faders. Dragging up increases the
+  value; dragging down decreases it. The displayed number updates immediately.
 - Mixer settings are saved on the phone. Connecting again always starts muted.
 
 The recorder stays warm while connected for quick push-to-talk response. Muted
@@ -45,10 +47,13 @@ server, USB transport, and HDMI output:
 - Holding and releasing produces the matching unmuted and muted server states.
 - Pressing Home during a hold mutes the server before the hold completes.
 - Returning to the activity leaves it muted.
-- All three sliders are visible together while connected.
-- Slider changes reach the PCM mixer, and saved values survive process restart
+- All three faders are visible together while connected, with a compact layout
+  when the connection settings occupy part of the phone screen.
+- Dragging each fader in both directions changes its corresponding saved value.
+- Fader changes reach the PCM mixer, and saved values survive process restart
   and an APK update.
 
-These checks do not establish end-to-end acoustic latency or complete acoustic
-echo cancellation. Final listening assessment depends on the room, microphone
-placement, loudspeaker level, and the desktop processing chain.
+The user confirmed sound only while holding the talk button, without duplicated
+voice at zero added echo, before the fader-only UI update. These checks do not
+establish end-to-end acoustic latency or complete acoustic echo cancellation in
+other room configurations or at higher levels.
