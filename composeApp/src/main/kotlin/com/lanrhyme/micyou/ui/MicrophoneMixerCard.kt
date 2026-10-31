@@ -2,6 +2,8 @@ package com.lanrhyme.micyou.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,11 +26,13 @@ import com.lanrhyme.micyou.audio.MicrophoneMixer
 import com.lanrhyme.micyou.viewmodel.AppUiState
 import com.lanrhyme.micyou.viewmodel.MainViewModel
 import com.lanrhyme.micyou.viewmodel.StreamState
+import com.lanrhyme.micyou.viewmodel.ConnectionMode
 import kotlin.math.roundToInt
 
 @Composable
 fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
     val connected = state.streamState == StreamState.Streaming
+    val direct = state.mode == ConnectionMode.Bluetooth
     val holding = connected && !state.isMuted
     val talkLabel = stringResource(when {
         !state.pushToTalkEnabled && holding -> R.string.normalMute
@@ -55,9 +59,12 @@ fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val compact = maxHeight < 400.dp
+        val contentHeight = maxOf(maxHeight, 360.dp)
         Column(
             modifier = Modifier.fillMaxSize()
                 .background(Color(0xFF252D27), RoundedCornerShape(24.dp))
+                .verticalScroll(rememberScrollState())
+                .height(contentHeight)
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -67,9 +74,12 @@ fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
                     style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 OutlinedButton(onClick = { viewModel.toggleStream() },
                     enabled = state.streamState != StreamState.Connecting) {
-                    Text(stringResource(if (connected) R.string.pttDisconnect else R.string.pttConnect))
+                    Text(stringResource(if (connected) R.string.pttDisconnect
+                        else if (direct) R.string.bluetoothStart else R.string.pttConnect))
                 }
             }
+            if (direct && connected) Text(state.bluetoothDeviceName,
+                style = MaterialTheme.typography.bodySmall, color = Color(0xFFB6C3B5))
             Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MixerFader(
                     stringResource(R.string.mixerVolume), "${(state.microphoneGain * 100).roundToInt()}%",
@@ -77,10 +87,12 @@ fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
                     Modifier.weight(1f).fillMaxHeight(), compact, viewModel::setMicrophoneGain
                 )
                 MixerFader(
-                    stringResource(R.string.mixerMusic), "${(state.musicGain * 100).roundToInt()}%",
-                    state.musicGain, 0f..1f, "0", "100%", Color(0xFFEBA5B3),
+                    stringResource(if (direct) R.string.bluetoothSpeakerVolume else R.string.mixerMusic),
+                    "${((if (direct) state.speakerGain else state.musicGain) * 100).roundToInt()}%",
+                    if (direct) state.speakerGain else state.musicGain, 0f..1f, "0", "100%", Color(0xFFEBA5B3),
                     Modifier.weight(1f).fillMaxHeight(), compact,
-                    onChange = viewModel::setMusicGain, enabled = state.pcMusicAvailable
+                    onChange = if (direct) viewModel::setSpeakerGain else viewModel::setMusicGain,
+                    enabled = direct || state.pcMusicAvailable
                 )
                 MixerFader(
                     stringResource(R.string.mixerEcho), "${(state.microphoneEcho * 100).roundToInt()}%",
@@ -93,7 +105,7 @@ fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
                     Modifier.weight(1f).fillMaxHeight(), compact, viewModel::setMicrophoneEchoDelay
                 )
             }
-            Text(stringResource(if (state.pcMusicAvailable) R.string.mixerFaderHint else R.string.mixerMusicHint), color = Color(0xFFB6C3B5),
+            Text(stringResource(if (direct) R.string.bluetoothLocalHint else if (state.pcMusicAvailable) R.string.mixerFaderHint else R.string.mixerMusicHint), color = Color(0xFFB6C3B5),
                 style = MaterialTheme.typography.bodySmall)
             Surface(
                 modifier = Modifier.fillMaxWidth().height(if (compact) 64.dp else 76.dp)

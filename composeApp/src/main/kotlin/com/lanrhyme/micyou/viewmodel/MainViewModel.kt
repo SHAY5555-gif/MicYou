@@ -47,7 +47,8 @@ import com.lanrhyme.micyou.viewmodel.ConnectionMode
 import com.lanrhyme.micyou.viewmodel.UpdateDownloadState
 enum class ConnectionMode(val label: String) {
     Wifi("Wi-Fi"),
-    Usb("USB (ADB)")
+    Usb("USB (ADB)"),
+    Bluetooth("Bluetooth direct")
 }
 
 enum class TransportProtocol(val label: String) {
@@ -88,6 +89,8 @@ data class AppUiState(
     val microphoneGain: Float = 1f,
     val musicGain: Float = 1f,
     val pcMusicAvailable: Boolean = false,
+    val bluetoothDeviceName: String = "",
+    val speakerGain: Float = 0.5f,
     val microphoneEcho: Float = 0f,
     val microphoneEchoDelay: Float = 120f,
     val isAutoConfig: Boolean = true,
@@ -222,6 +225,8 @@ class MainViewModel : ViewModel() {
                         microphoneGain = audioState.microphoneGain,
                         musicGain = audioState.musicGain,
                         pcMusicAvailable = audioState.pcMusicAvailable,
+                        bluetoothDeviceName = audioState.bluetoothDeviceName,
+                        speakerGain = audioState.speakerGain,
                         microphoneEcho = audioState.microphoneEcho,
                         microphoneEchoDelay = audioState.microphoneEchoDelay,
                         isAutoConfig = audioState.isAutoConfig,
@@ -269,6 +274,7 @@ class MainViewModel : ViewModel() {
     fun setPushToTalkEnabled(enabled: Boolean) = audioStreamViewModel.setPushToTalkEnabled(enabled)
     fun setMicrophoneGain(value: Float) = audioStreamViewModel.setMicrophoneGain(value)
     fun setMusicGain(value: Float) = audioStreamViewModel.setMusicGain(value)
+    fun setSpeakerGain(value: Float) = audioStreamViewModel.setSpeakerGain(value)
     fun setMicrophoneEcho(value: Float) = audioStreamViewModel.setMicrophoneEcho(value)
     fun setMicrophoneEchoDelay(value: Float) = audioStreamViewModel.setMicrophoneEchoDelay(value)
     fun startStream() = audioStreamViewModel.startStream()

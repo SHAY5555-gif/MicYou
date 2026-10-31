@@ -30,6 +30,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import com.lanrhyme.micyou.audio.MicrophoneMixer
+import com.lanrhyme.micyou.audio.BluetoothMicrophoneEngine
+import android.media.AudioManager
+import android.content.Context
+import com.lanrhyme.micyou.util.ContextHelper
 import com.lanrhyme.micyou.network.PcMixerClient
 import com.lanrhyme.micyou.audio.AudioEngine
 import com.lanrhyme.micyou.audio.AudioFormat
@@ -66,6 +70,8 @@ data class AudioStreamUiState(
     val microphoneGain: Float = 1f,
     val musicGain: Float = 1f,
     val pcMusicAvailable: Boolean = false,
+    val bluetoothDeviceName: String = "",
+    val speakerGain: Float = 0.5f,
     val microphoneEcho: Float = 0f,
     val microphoneEchoDelay: Float = 120f,
     val isAutoConfig: Boolean = true,
@@ -81,6 +87,7 @@ data class AudioStreamUiState(
 
 class AudioStreamViewModel : ViewModel() {
     private val _audioEngine = AudioEngine()
+    private val _bluetoothEngine = BluetoothMicrophoneEngine()
     val audioEngine: AudioEngine get() = _audioEngine
     private val viewModelCoroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Logger.e("AudioStreamViewModel", "Unhandled coroutine error (${throwable.javaClass.simpleName}): ${throwable.message}", throwable)
@@ -103,7 +110,8 @@ class AudioStreamViewModel : ViewModel() {
     val uiState: StateFlow<AudioStreamUiState> = _uiState.asStateFlow()
 
     // 音频电平相关
-    val audioLevels = _audioEngine.audioLevels
+    private val _audioLevels = MutableStateFlow(0f)
+    val audioLevels = _audioLevels.asStateFlow()
 
     // 设备发现
     private val discoveryManager = DeviceDiscoveryManager()
@@ -128,6 +136,13 @@ class AudioStreamViewModel : ViewModel() {
                     }.onFailure {
                         if (it is kotlinx.coroutines.CancellationException) throw it
                         _uiState.update { state -> state.copy(pcMusicAvailable = false) }
+                    }
+                } else if (_uiState.value.mode == ConnectionMode.Bluetooth) {
+                    val manager = ContextHelper.getContext()?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                    if (manager != null) {
+                        val maximum = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                        _uiState.update { it.copy(pcMusicAvailable = false,
+                            speakerGain = manager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maximum) }
                     }
                 }
                 delay(1500)
@@ -188,12 +203,13 @@ class AudioStreamViewModel : ViewModel() {
     private fun setupAudioEngineObservers() {
         auxiliaryScope.launch {
             _audioEngine.streamState.collect { state ->
-                _uiState.update { it.copy(streamState = state) }
+                if (_uiState.value.mode != ConnectionMode.Bluetooth) _uiState.update { it.copy(streamState = state) }
             }
         }
 
         auxiliaryScope.launch {
             _audioEngine.lastError.collect { error ->
+                if (_uiState.value.mode == ConnectionMode.Bluetooth) return@collect
                 if (error == "UDP_AUDIO_WARNING") {
                     _uiState.update { it.copy(showUdpWarningDialog = true) }
                 } else {
@@ -204,9 +220,24 @@ class AudioStreamViewModel : ViewModel() {
 
         auxiliaryScope.launch {
             _audioEngine.isMuted.collect { muted ->
-                _uiState.update { it.copy(isMuted = muted) }
+                if (_uiState.value.mode != ConnectionMode.Bluetooth) _uiState.update { it.copy(isMuted = muted) }
             }
         }
+
+        auxiliaryScope.launch {
+            _bluetoothEngine.state.collect { state ->
+                if (_uiState.value.mode == ConnectionMode.Bluetooth) _uiState.update {
+                    it.copy(streamState = state.streamState, isMuted = state.isMuted,
+                        bluetoothDeviceName = state.deviceName, errorMessage = state.error)
+                }
+            }
+        }
+        auxiliaryScope.launch { _audioEngine.audioLevels.collect {
+            if (_uiState.value.mode != ConnectionMode.Bluetooth) _audioLevels.value = it
+        } }
+        auxiliaryScope.launch { _bluetoothEngine.levels.collect {
+            if (_uiState.value.mode == ConnectionMode.Bluetooth) _audioLevels.value = it
+        } }
 
         // Auto-start handled via MainViewModel
     }
@@ -228,14 +259,19 @@ class AudioStreamViewModel : ViewModel() {
     fun toggleMute() {
         val newMuteState = !_uiState.value.isMuted
         auxiliaryScope.launch {
-            _audioEngine.setMute(newMuteState)
+            if (_uiState.value.mode == ConnectionMode.Bluetooth) _bluetoothEngine.setMute(newMuteState)
+            else _audioEngine.setMute(newMuteState)
         }
     }
 
-    fun setPushToTalkPressed(pressed: Boolean) = _audioEngine.setPushToTalkPressed(pressed)
+    fun setPushToTalkPressed(pressed: Boolean) {
+        if (_uiState.value.mode == ConnectionMode.Bluetooth) _bluetoothEngine.setPushToTalkPressed(pressed)
+        else _audioEngine.setPushToTalkPressed(pressed)
+    }
 
     fun setPushToTalkEnabled(enabled: Boolean) {
         _audioEngine.setPushToTalkEnabled(enabled)
+        _bluetoothEngine.setPushToTalkEnabled(enabled)
         _uiState.update { it.copy(pushToTalkEnabled = enabled) }
         settings.putBoolean("push_to_talk_enabled", enabled)
     }
@@ -243,6 +279,7 @@ class AudioStreamViewModel : ViewModel() {
     fun setMicrophoneGain(value: Float) {
         val level = (if (value.isFinite()) value else 1f).coerceIn(0f, MicrophoneMixer.MAX_GAIN)
         _audioEngine.setMicrophoneGain(level)
+        _bluetoothEngine.mixer.gain = level
         _uiState.update { it.copy(microphoneGain = level) }
         settings.putFloat("microphone_gain", level)
     }
@@ -263,9 +300,19 @@ class AudioStreamViewModel : ViewModel() {
         }
     }
 
+    fun setSpeakerGain(value: Float) {
+        if (!value.isFinite()) return
+        val manager = ContextHelper.getContext()?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val maximum = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        val level = (value.coerceIn(0f, 1f) * maximum).toInt()
+        manager.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0)
+        _uiState.update { it.copy(speakerGain = level.toFloat() / maximum) }
+    }
+
     fun setMicrophoneEcho(value: Float) {
         val level = (if (value.isFinite()) value else 0f).coerceIn(0f, 0.5f)
         _audioEngine.setMicrophoneEcho(level)
+        _bluetoothEngine.mixer.echoLevel = level
         _uiState.update { it.copy(microphoneEcho = level) }
         settings.putFloat("microphone_echo", level)
     }
@@ -273,6 +320,7 @@ class AudioStreamViewModel : ViewModel() {
     fun setMicrophoneEchoDelay(value: Float) {
         val delay = (if (value.isFinite()) value else 120f).coerceIn(50f, 450f)
         _audioEngine.setMicrophoneEchoDelay(delay)
+        _bluetoothEngine.mixer.echoDelayMs = delay
         _uiState.update { it.copy(microphoneEchoDelay = delay) }
         settings.putFloat("microphone_echo_delay", delay)
     }
@@ -300,6 +348,20 @@ class AudioStreamViewModel : ViewModel() {
     private suspend fun startStreamInternal() {
         Logger.i("AudioStreamViewModel", "Starting stream")
         val mode = _uiState.value.mode
+        if (mode == ConnectionMode.Bluetooth) {
+            _uiState.update { it.copy(streamState = StreamState.Connecting, errorMessage = null, showErrorDialog = false) }
+            try {
+                _audioEngine.stopAndWait()
+                _bluetoothEngine.start()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update { it.copy(streamState = StreamState.Error,
+                    errorMessage = e.message, showErrorDialog = true, errorDetails = null) }
+            }
+            return
+        }
+        _bluetoothEngine.stopAndWait()
         val ip = _uiState.value.ipAddress.trim()
 
         // 端口验证：确保端口在有效范围内 (1-65535)
@@ -382,6 +444,7 @@ class AudioStreamViewModel : ViewModel() {
         isStopStreamRequestPending = true
         auxiliaryScope.launch {
             try {
+                _bluetoothEngine.stopAndWait()
                 _audioEngine.stopAndWait()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -397,6 +460,7 @@ class AudioStreamViewModel : ViewModel() {
         Logger.i("AudioStreamViewModel", "Setting connection mode to $mode")
 
         val current = _uiState.value
+        if (current.mode != mode && current.streamState in listOf(StreamState.Streaming, StreamState.Connecting)) stopStream()
 
         val updatedPort = when (mode) {
             ConnectionMode.Usb -> {
@@ -411,7 +475,8 @@ class AudioStreamViewModel : ViewModel() {
             applyAutoConfig()
         }
 
-        _uiState.update { it.copy(mode = mode, port = updatedPort) }
+        _uiState.update { it.copy(mode = mode, port = updatedPort, isMuted = true,
+            streamState = StreamState.Idle, errorMessage = null) }
         settings.putString("connection_mode", mode.name)
 
         // Manage discovery lifecycle based on mode
@@ -529,7 +594,10 @@ class AudioStreamViewModel : ViewModel() {
         closeJob?.let { return@synchronized it }
         closed.set(true)
         discoveryManager.stopDiscovery()
-        val engineCloseJob = _audioEngine.close()
+        val engineCloseJob = CoroutineScope(Dispatchers.IO).launch {
+            _audioEngine.close().join()
+            _bluetoothEngine.close().join()
+        }
         auxiliaryScope.cancel()
         closeJob = engineCloseJob
         engineCloseJob

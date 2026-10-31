@@ -6,7 +6,11 @@ official app. The desktop 2.1.1 wire protocol is unchanged.
 
 ## Controls
 
-- Connect opens the selected USB or Wi-Fi connection in a muted state.
+- Connect opens the selected USB, Wi-Fi-to-PC, or direct Bluetooth connection
+  in a muted state.
+- For direct Bluetooth, pair the soundbar in Android Bluetooth settings, return
+  to the app, choose **Bluetooth**, and tap **Connect Bluetooth**. The app shows
+  the confirmed output device name. This mode needs no computer or USB cable.
 - Choose **Push to talk** or **Normal** in the bottom bar.
 - Push to talk sends microphone audio only while held. Release, a cancelled
   gesture, opening settings, or leaving the activity mutes that mode.
@@ -17,6 +21,8 @@ official app. The desktop 2.1.1 wire protocol is unchanged.
 - Microphone volume ranges from 0% to 600%. Zero also mutes the echo tail.
 - Music (PC) independently adjusts supported Windows music/browser sessions
   from 0% to 100%, over the optional USB companion bridge below.
+- In direct Bluetooth mode that fader becomes **Speaker**, controlling Android
+  media volume separately from microphone gain.
 - Echo level ranges from 0% to 50%. Zero is dry, without an added echo.
 - Echo delay ranges from 50 to 450 milliseconds.
 - The four controls use vertical console faders. Dragging up increases the
@@ -27,9 +33,19 @@ The recorder stays warm while connected for quick response in either mode. Muted
 audio is discarded locally instead of being transmitted. Disconnect releases
 the capture session. This is transmission gating, not permission revocation.
 
-The mixer processes PCM before Opus encoding. The echo has bounded feedback and
-is cleared when muted or when a push-to-talk hold is released. Muted PCM and
-pending FEC groups are discarded.
+The mixer processes PCM before Opus encoding on the PC transports. The direct
+Bluetooth engine sends PCM through Android without Opus or a network server.
+The echo has bounded feedback and is cleared when muted or when a push-to-talk
+hold is released. The PC transports discard muted PCM and pending FEC groups.
+Direct Bluetooth sends silence to keep the output warm and flushes the app's
+playback buffer when muted. It cannot recall audio already buffered by the
+Bluetooth receiver.
+
+Direct Bluetooth requests roughly 5 ms capture blocks, native 44.1/48 kHz
+audio, a small output buffer and Android low-latency playback where supported.
+Unsent samples are dropped rather than queued. These settings do not establish
+the acoustic latency of the soundbar. The actual Bluetooth route is checked
+before transmission and during playback; route loss stops the session.
 
 A stereo-linked peak limiter caps boosted PCM at approximately 95% of full
 scale, with immediate attenuation and an 80 ms recovery envelope. It adds no
@@ -52,8 +68,12 @@ automatically after a PC reboot.
 
 Added echo and acoustic feedback are different. The echo slider cannot remove
 sound that travels from a loudspeaker back into the microphone. Keep the desktop
-echo canceller enabled and begin with added echo at zero. Noise reduction and
-level gating do not measure the distance to a speaker.
+echo canceller enabled for PC transports and begin with added echo at zero.
+Direct Bluetooth uses optional Android noise suppression and acoustic echo
+cancellation when available. It does not run the desktop AEC7/RNNoise engine,
+and Android effect availability does not prove effective cancellation for an
+external soundbar. Noise reduction and level gating do not measure the
+distance to a speaker.
 
 ## Validation
 
@@ -89,6 +109,30 @@ server, USB transport, and HDMI output:
 - The phone music fader changed Chrome's Windows session to 60% while MicYou's
   voice session and the master output retained their previous levels.
 - An out-of-range bridge request was rejected without changing the music level.
+
+The direct Bluetooth build passes the same 12 unit tests and debug build. It
+has been installed on the physical SM-F9710 and connected to the Q70T:
+
+- Android confirmed the active AudioTrack route as Samsung Soundbar Q70T.
+  The engine reported 48 kHz, 240-frame input blocks and a 480-frame app output
+  buffer. Android noise suppression and AEC reported enabled. These are local
+  parameters, not an acoustic latency measurement.
+- Push to talk showed transmitting while held and muted after release.
+- Normal stayed on after the tap and muted on the next tap.
+- Disconnecting only the paired soundbar stopped capture and displayed the
+  route-lost error. Reconnecting succeeded and started muted.
+- The Speaker fader changed Android media volume from 15 to 4 and back to 15,
+  independently of the unchanged microphone gain.
+- All four faders are visible in the disconnected compact layout, with scroll
+  available in shorter windows. A missing Bluetooth connection displays a
+  visible message rather than silently reverting to idle.
+
+The initial connection failed because the soundbar had automatically connected
+to a Samsung Smart Monitor M7. Switching the existing Bluetooth connection to
+the phone through SmartThings resolved it. No pairing was removed.
+User confirmation of audible output with USB unplugged and an acoustic delay
+comparison are still pending. See `samsung-wireless-audio-research.md` for the
+SDK investigation.
 
 The user confirmed sound only while holding the talk button, without duplicated
 voice at zero added echo, before the fader-only UI update. These checks do not

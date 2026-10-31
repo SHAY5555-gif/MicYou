@@ -328,12 +328,13 @@ class AudioEngine constructor() {
         private fun getActiveEngine(): AudioEngine? = activeEngineOwner.get()
 
         fun requestDisconnectFromNotification() {
+            BluetoothMicrophoneEngine.requestStop()
             getActiveEngine()?.stop()
         }
 
         fun isStreaming(): Boolean {
             val state = getActiveEngine()?.currentStreamState()
-            return state == StreamState.Streaming || state == StreamState.Connecting
+            return BluetoothMicrophoneEngine.isActive() || state == StreamState.Streaming || state == StreamState.Connecting
         }
     }
     private val _state = MutableStateFlow(StreamState.Idle)

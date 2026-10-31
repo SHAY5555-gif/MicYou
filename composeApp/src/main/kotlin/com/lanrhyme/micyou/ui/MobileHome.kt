@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.Extension
@@ -181,6 +182,12 @@ fun MobileHome(viewModel: MainViewModel) {
         state.snackbarMessage?.let {
             snackbarHostState.showSnackbar(it)
             viewModel.clearSnackbar()
+        }
+    }
+
+    LaunchedEffect(state.streamState, state.errorMessage) {
+        if (state.mode == ConnectionMode.Bluetooth && state.streamState == StreamState.Error) {
+            state.errorMessage?.let { snackbarHostState.showSnackbar(it) }
         }
     }
 
@@ -376,7 +383,8 @@ private fun MobileHeaderSection(
                         color = animatedColor
                     )
                     Text(
-                        "${stringResource(R.string.ipLabel)}${"Client"}",
+                        if (state.mode == ConnectionMode.Bluetooth) stringResource(R.string.modeBluetooth)
+                        else "${stringResource(R.string.ipLabel)}${"Client"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -427,18 +435,20 @@ private fun ConnectionConfigCard(
             modifier = Modifier.padding(12.dp).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Mode label
-            Text(
-                stringResource(R.string.connectionModeLabel),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (state.mode != ConnectionMode.Bluetooth) {
+                Text(
+                    stringResource(R.string.connectionModeLabel),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             // Mode selector
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 val modes = listOf(
-                    ConnectionMode.Wifi to (stringResource(R.string.modeWifi) to Icons.Rounded.Wifi),
-                    ConnectionMode.Usb to (stringResource(R.string.modeUsb) to Icons.Rounded.Usb)
+                    ConnectionMode.Wifi to (stringResource(R.string.modeWifiPc) to Icons.Rounded.Wifi),
+                    ConnectionMode.Usb to (stringResource(R.string.modeUsb) to Icons.Rounded.Usb),
+                    ConnectionMode.Bluetooth to (stringResource(R.string.modeBluetooth) to Icons.Rounded.Bluetooth)
                 )
 
                 modes.forEach { (mode, info) ->
@@ -483,6 +493,12 @@ private fun ConnectionConfigCard(
                 }
             }
 
+            if (state.mode == ConnectionMode.Bluetooth) {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                androidx.compose.material3.TextButton(onClick = {
+                    context.startActivity(android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
+                }) { Text(stringResource(R.string.bluetoothSettings)) }
+            }
 
 
             // Discovered devices list (WiFi mode only, always visible during connection)
@@ -575,7 +591,7 @@ private fun ConnectionConfigCard(
 
             // IP/Port input
             AnimatedVisibility(
-                visible = true,
+                visible = state.mode != ConnectionMode.Bluetooth,
                 enter = fadeIn(tween(300)) + expandVertically(),
                 exit = fadeOut(tween(200)) + shrinkVertically()
             ) {
