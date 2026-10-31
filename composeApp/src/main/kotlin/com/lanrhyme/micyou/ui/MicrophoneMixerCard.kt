@@ -1,6 +1,7 @@
 package com.lanrhyme.micyou.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,10 +29,28 @@ import kotlin.math.roundToInt
 fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
     val connected = state.streamState == StreamState.Streaming
     val holding = connected && !state.isMuted
-    val talkLabel = stringResource(if (holding) R.string.pttTalking else R.string.pttHold)
+    val talkLabel = stringResource(when {
+        !state.pushToTalkEnabled && holding -> R.string.normalMute
+        !state.pushToTalkEnabled -> R.string.normalStart
+        holding -> R.string.pttTalking
+        else -> R.string.pttHold
+    })
     val latestViewModel by rememberUpdatedState(viewModel)
     DisposableEffect(Unit) {
         onDispose { latestViewModel.setPushToTalkPressed(false) }
+    }
+    val talkInteraction = if (state.pushToTalkEnabled) {
+        Modifier.pointerInput(connected) {
+            if (connected) {
+                detectTapGestures(onPress = {
+                    latestViewModel.setPushToTalkPressed(true)
+                    try { tryAwaitRelease() }
+                    finally { latestViewModel.setPushToTalkPressed(false) }
+                })
+            }
+        }
+    } else {
+        Modifier.clickable(enabled = connected) { latestViewModel.toggleMute() }
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val compact = maxHeight < 400.dp
@@ -72,15 +91,7 @@ fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
             Surface(
                 modifier = Modifier.fillMaxWidth().height(if (compact) 64.dp else 76.dp)
                     .semantics { contentDescription = talkLabel }
-                    .pointerInput(connected) {
-                        if (connected) {
-                            detectTapGestures(onPress = {
-                                latestViewModel.setPushToTalkPressed(true)
-                                try { tryAwaitRelease() }
-                                finally { latestViewModel.setPushToTalkPressed(false) }
-                            })
-                        }
-                    },
+                    .then(talkInteraction),
                 shape = RoundedCornerShape(24.dp),
                 color = if (holding) Color(0xFFBAE28B) else Color(0xFF364530),
                 contentColor = if (holding) Color(0xFF203019) else Color(0xFFDCE8D6)
@@ -96,7 +107,13 @@ fun MicrophoneMixerCard(state: AppUiState, viewModel: MainViewModel) {
                 }
             }
             Text(
-                stringResource(if (connected) R.string.pttReady else R.string.pttConnectFirst),
+                stringResource(when {
+                    !connected && state.pushToTalkEnabled -> R.string.pttConnectFirst
+                    !connected -> R.string.normalConnectFirst
+                    state.pushToTalkEnabled -> R.string.pttReady
+                    holding -> R.string.normalLive
+                    else -> R.string.normalReady
+                }),
                 style = MaterialTheme.typography.bodySmall, color = Color(0xFFB6C3B5)
             )
         }

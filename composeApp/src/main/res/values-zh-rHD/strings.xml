@@ -394,4 +394,10 @@
     <string name="mixerEchoHint">0% adds no echo. Sound returning from the room is controlled separately by the desktop echo canceller.</string>
     <string name="mixerConsoleTitle">Mixer</string>
     <string name="mixerFaderHint">Slide up to raise, down to lower.</string>
+    <string name="microphoneModeNormal">Normal</string>
+    <string name="normalStart">Turn microphone on</string>
+    <string name="normalMute">Mute microphone</string>
+    <string name="normalReady">Tap once to turn the microphone on.</string>
+    <string name="normalLive">Microphone is on. Tap again to mute.</string>
+    <string name="normalConnectFirst">Connect first, then tap to turn the microphone on.</string>
 </resources>

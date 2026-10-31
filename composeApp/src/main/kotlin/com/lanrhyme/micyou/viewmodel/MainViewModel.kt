@@ -84,6 +84,7 @@ data class AppUiState(
     val channelCount: ChannelCount = ChannelCount.Stereo,
     val audioFormat: AudioFormat = AudioFormat.PCM_FLOAT,
     val isMuted: Boolean = true,
+    val pushToTalkEnabled: Boolean = true,
     val microphoneGain: Float = 1f,
     val microphoneEcho: Float = 0f,
     val microphoneEchoDelay: Float = 120f,
@@ -215,6 +216,7 @@ class MainViewModel : ViewModel() {
                         channelCount = audioState.channelCount,
                         audioFormat = audioState.audioFormat,
                         isMuted = audioState.isMuted,
+                        pushToTalkEnabled = audioState.pushToTalkEnabled,
                         microphoneGain = audioState.microphoneGain,
                         microphoneEcho = audioState.microphoneEcho,
                         microphoneEchoDelay = audioState.microphoneEchoDelay,
@@ -260,6 +262,7 @@ class MainViewModel : ViewModel() {
     fun toggleStream() = audioStreamViewModel.toggleStream()
     fun toggleMute() = audioStreamViewModel.toggleMute()
     fun setPushToTalkPressed(pressed: Boolean) = audioStreamViewModel.setPushToTalkPressed(pressed)
+    fun setPushToTalkEnabled(enabled: Boolean) = audioStreamViewModel.setPushToTalkEnabled(enabled)
     fun setMicrophoneGain(value: Float) = audioStreamViewModel.setMicrophoneGain(value)
     fun setMicrophoneEcho(value: Float) = audioStreamViewModel.setMicrophoneEcho(value)
     fun setMicrophoneEchoDelay(value: Float) = audioStreamViewModel.setMicrophoneEchoDelay(value)

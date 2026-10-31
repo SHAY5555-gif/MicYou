@@ -775,7 +775,16 @@ private fun MobileBottomBar(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(stringResource(R.string.pttIdleNote), style = MaterialTheme.typography.bodySmall)
+                androidx.compose.material3.FilterChip(
+                    selected = state.pushToTalkEnabled,
+                    onClick = { viewModel.setPushToTalkEnabled(true) },
+                    label = { Text(stringResource(R.string.pttIdleNote)) }
+                )
+                androidx.compose.material3.FilterChip(
+                    selected = !state.pushToTalkEnabled,
+                    onClick = { viewModel.setPushToTalkEnabled(false) },
+                    label = { Text(stringResource(R.string.microphoneModeNormal)) }
+                )
             }
             
             val dotColor by animateColorAsState(

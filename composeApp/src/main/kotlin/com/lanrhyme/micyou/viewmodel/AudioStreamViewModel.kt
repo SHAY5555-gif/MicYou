@@ -58,6 +58,7 @@ data class AudioStreamUiState(
     val channelCount: ChannelCount = ChannelCount.Stereo,
     val audioFormat: AudioFormat = defaultAudioFormat(),
     val isMuted: Boolean = true,
+    val pushToTalkEnabled: Boolean = true,
     val microphoneGain: Float = 1f,
     val microphoneEcho: Float = 0f,
     val microphoneEchoDelay: Float = 120f,
@@ -116,6 +117,7 @@ class AudioStreamViewModel : ViewModel() {
     }
 
     private fun loadSettings() {
+        setPushToTalkEnabled(settings.getBoolean("push_to_talk_enabled", true))
         setMicrophoneGain(settings.getFloat("microphone_gain", 1f))
         setMicrophoneEcho(settings.getFloat("microphone_echo", 0f))
         setMicrophoneEchoDelay(settings.getFloat("microphone_echo_delay", 120f))
@@ -209,6 +211,12 @@ class AudioStreamViewModel : ViewModel() {
     }
 
     fun setPushToTalkPressed(pressed: Boolean) = _audioEngine.setPushToTalkPressed(pressed)
+
+    fun setPushToTalkEnabled(enabled: Boolean) {
+        _audioEngine.setPushToTalkEnabled(enabled)
+        _uiState.update { it.copy(pushToTalkEnabled = enabled) }
+        settings.putBoolean("push_to_talk_enabled", enabled)
+    }
 
     fun setMicrophoneGain(value: Float) {
         val level = (if (value.isFinite()) value else 1f).coerceIn(0f, 2f)
