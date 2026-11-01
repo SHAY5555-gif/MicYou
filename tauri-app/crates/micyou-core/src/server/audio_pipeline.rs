@@ -26,11 +26,11 @@ use crate::transport::session::AudioStreamEvent;
 use crate::transport::udp::{ActiveAudioSession, SharedActiveAudioSession};
 use micyou_audio::dsp::{AudioDspSettings, DspProcessor};
 use micyou_audio::AecFailure;
-use std::path::PathBuf;
 use micyou_protocol::micyou::AudioPacketMessage;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 
 /// Output sample rate of the whole pipeline.
@@ -176,16 +176,29 @@ impl StreamDecoder {
         if audio.codec == micyou_protocol::CODEC_OPUS {
             self.decode_opus(&audio.buffer, sample_rate, channels, out);
         } else if !decode_pcm(audio.audio_format, &audio.buffer, out) {
-            self.report_failure(format_args!("Unsupported audio format: {}", audio.audio_format));
+            self.report_failure(format_args!(
+                "Unsupported audio format: {}",
+                audio.audio_format
+            ));
         }
         if !out.is_empty() && sample_rate != OUTPUT_RATE {
             self.resample(sample_rate, channels, out);
         }
     }
 
-    fn decode_opus(&mut self, buffer: &[u8], sample_rate: u32, channels: usize, out: &mut Vec<f32>) {
+    fn decode_opus(
+        &mut self,
+        buffer: &[u8],
+        sample_rate: u32,
+        channels: usize,
+        out: &mut Vec<f32>,
+    ) {
         let key = (sample_rate, channels);
-        if self.opus.as_ref().is_none_or(|(current, _)| *current != key) {
+        if self
+            .opus
+            .as_ref()
+            .is_none_or(|(current, _)| *current != key)
+        {
             self.opus = opus::Channels::from_channel_count(channels)
                 .and_then(|ch| opus::Decoder::new(sample_rate, ch).ok())
                 .map(|decoder| (key, decoder));
@@ -208,7 +221,11 @@ impl StreamDecoder {
 
     fn resample(&mut self, sample_rate: u32, channels: usize, samples: &mut Vec<f32>) {
         let key = (sample_rate, channels);
-        if self.resampler.as_ref().is_none_or(|(current, _)| *current != key) {
+        if self
+            .resampler
+            .as_ref()
+            .is_none_or(|(current, _)| *current != key)
+        {
             let resampler = micyou_audio::RubatoResampler::new(sample_rate, OUTPUT_RATE, channels)
                 .inspect_err(|e| log::error!("[Audio] Failed to create resampler: {e}"))
                 .ok();
@@ -280,11 +297,14 @@ fn run(pipeline: Pipeline) {
     // case where opening failed earlier and a later attempt succeeds.
     if !output::ensure_started(
         &audio_output,
-        output_device,
+        output_device.clone(),
         output_buffer_ms,
         resource_dir.as_deref(),
     ) {
-        log::error!("[Audio] Output device unavailable; audio will be silent");
+        let error = "Selected output device unavailable".to_string();
+        log::error!("[Audio] {error}");
+        let _ = ready_tx.send(Err(error));
+        return;
     }
     let _ = ready_tx.send(Ok(()));
     let mut dsp_processor = DspProcessor::new(dsp_settings.clone(), resource_dir);
@@ -296,6 +316,11 @@ fn run(pipeline: Pipeline) {
     let mut pcm_f32 = Vec::new();
     let mut frame_counter: u32 = 0;
     let mut monitoring: Option<bool> = None;
+    let diagnostics_enabled =
+        std::env::var("MICYOU_AUDIO_DIAGNOSTICS").is_ok_and(|value| value == "1");
+    let mut diagnostics_at = Instant::now();
+    let mut input_peak_rms = 0.0_f32;
+    let mut processed_peak_rms = 0.0_f32;
 
     // Speaker loopback capture for the AEC far-end reference. Windows uses
     // WASAPI loopback; Linux records the default physical playback sink.
@@ -351,7 +376,9 @@ fn run(pipeline: Pipeline) {
             return transport_active;
         }
 
-        let failure = lb.take_failure_reason().or_else(|| lb.start().err());
+        let failure = lb
+            .take_failure_reason()
+            .or_else(|| lb.start_for_output_device(output_device.as_deref()).err());
         if let Some(reason) = failure {
             disable_aec_runtime(runtime_available, &events, reason);
         } else {
@@ -362,7 +389,11 @@ fn run(pipeline: Pipeline) {
 
     let mut session_active = false;
     loop {
-        let wait = if session_active { ACTIVE_POLL } else { IDLE_POLL };
+        let wait = if session_active {
+            ACTIVE_POLL
+        } else {
+            IDLE_POLL
+        };
         let event = match recv_within(&runtime, &mut audio_rx, wait) {
             Ok(Some(event)) => event,
             Ok(None) => break,
@@ -381,6 +412,9 @@ fn run(pipeline: Pipeline) {
         match event {
             AudioStreamEvent::SessionStarting { expected, epoch } => {
                 audio_received_for_session = false;
+                diagnostics_at = Instant::now();
+                input_peak_rms = 0.0;
+                processed_peak_rms = 0.0;
                 if let Some(lb) = &loopback {
                     lb.reset_session();
                     restore_aec_runtime(&mut aec_runtime_available, &dsp_settings, &events);
@@ -434,6 +468,18 @@ fn run(pipeline: Pipeline) {
             // Local hard-mute: the output engine drops the audio itself;
             // report silence too so meters and plugin snapshots read zero.
             let muted = stats.is_muted();
+            if diagnostics_enabled {
+                input_peak_rms = input_peak_rms.max(input_rms);
+                processed_peak_rms = processed_peak_rms.max(processed_rms);
+                if diagnostics_at.elapsed() >= Duration::from_secs(1) {
+                    log::info!(
+                        "[AudioLevels] input_rms={input_peak_rms:.6} processed_rms={processed_peak_rms:.6} muted={muted}"
+                    );
+                    input_peak_rms = 0.0;
+                    processed_peak_rms = 0.0;
+                    diagnostics_at = Instant::now();
+                }
+            }
             if muted {
                 stats.set_levels(0.0, 0.0);
             } else {
@@ -446,7 +492,11 @@ fn run(pipeline: Pipeline) {
             if !frame_counter.is_multiple_of(6) {
                 continue;
             }
-            let level = if muted { 0 } else { (processed_rms * 500.0).min(100.0) as u32 };
+            let level = if muted {
+                0
+            } else {
+                (processed_rms * 500.0).min(100.0) as u32
+            };
             events.audio_level(level);
             if spectrum_streaming_enabled.load(Ordering::Acquire) {
                 let (mut raw, mut processed) = dsp_processor.get_spectrums();

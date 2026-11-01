@@ -513,13 +513,10 @@ impl AudioOutputManager {
                     }
                 }
             }
-            if matched_device.is_none() {
-                log::warn!(
-                    "Could not find exact device: {}, falling back to default.",
-                    target
-                );
-            }
-            matched_device.or_else(|| host.default_output_device())
+            Some(
+                matched_device
+                    .ok_or_else(|| format!("Selected output device is unavailable: {target}"))?,
+            )
         } else {
             // Auto-detect virtual audio devices by platform
             #[cfg(target_os = "windows")]
@@ -569,6 +566,10 @@ impl AudioOutputManager {
         };
 
         let device = device.ok_or("No output device available")?;
+        log::info!(
+            "[Audio] Opening output device '{}'",
+            device_name(&device).as_deref().unwrap_or("unknown")
+        );
 
         let config = device.default_output_config()?;
         self.device_sample_rate = config.sample_rate();
@@ -823,5 +824,21 @@ impl AudioOutputManager {
 impl Drop for AudioOutputManager {
     fn drop(&mut self) {
         self.stop_monitor_loopback();
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod route_tests {
+    use super::AudioOutputManager;
+
+    #[test]
+    fn unavailable_explicit_output_does_not_open_default() {
+        let mut manager = AudioOutputManager::new();
+        let result = manager.start(
+            Some("MicYou missing test output 87b9fe6b-6f96-4faf-86eb-20261101".into()),
+            100,
+        );
+        assert!(result.is_err());
+        assert!(!manager.is_open());
     }
 }

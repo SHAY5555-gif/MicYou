@@ -30,7 +30,8 @@ const CAPTURE_JOIN_POLL: Duration = Duration::from_millis(10);
 
 /// Cross-platform speaker loopback capture for AEC far-end reference.
 ///
-/// - Windows: WASAPI loopback on default render device (no virtual device needed)
+/// - Windows: WASAPI loopback on the selected render device, or the default
+///   render device when no explicit output was requested.
 /// - macOS: cpal input from BlackHole
 /// - Linux: pw-record on the default physical playback sink monitor
 pub struct LoopbackCapture {
@@ -51,6 +52,13 @@ impl LoopbackCapture {
     }
 
     pub fn start(&self) -> Result<(), AecFailure> {
+        self.start_for_output_device(None)
+    }
+
+    /// Match a selected Windows playback output exactly. A missing selection
+    /// fails capture instead of listening to an unrelated default speaker.
+    /// Other platforms retain their existing reference-capture routing.
+    pub fn start_for_output_device(&self, output_device: Option<&str>) -> Result<(), AecFailure> {
         if self.active.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -75,12 +83,15 @@ impl LoopbackCapture {
         let active = self.active.clone();
         let buffer = self.buffer.clone();
         let failure = self.failure.clone();
+        let output_device = output_device.map(str::to_owned);
 
         let spawned = std::thread::Builder::new()
             .name("SpeakerLoopback".into())
             .spawn(move || {
                 #[cfg(target_os = "windows")]
-                wasapi_loopback_thread(active, buffer, failure);
+                wasapi_loopback_thread(active, buffer, failure, output_device);
+                #[cfg(not(target_os = "windows"))]
+                let _ = output_device;
                 #[cfg(target_os = "linux")]
                 pipewire_loopback_thread(active, buffer, failure);
                 #[cfg(target_os = "macos")]
@@ -250,6 +261,7 @@ fn wasapi_loopback_thread(
     active: Arc<AtomicBool>,
     buffer: Arc<Mutex<HeapRb<f32>>>,
     failure: Arc<Mutex<Option<AecFailure>>>,
+    output_device: Option<String>,
 ) {
     use std::collections::VecDeque;
     use wasapi::*;
@@ -257,7 +269,13 @@ fn wasapi_loopback_thread(
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         initialize_mta().ok()?;
 
-        let device = DeviceEnumerator::new()?.get_default_device(&Direction::Render)?;
+        let enumerator = DeviceEnumerator::new()?;
+        let device = match output_device.as_deref() {
+            Some(name) => enumerator
+                .get_device_collection(&Direction::Render)?
+                .get_device_with_name(name)?,
+            None => enumerator.get_default_device(&Direction::Render)?,
+        };
         let device_name = device.get_friendlyname().unwrap_or_default();
         log::info!("[Loopback] WASAPI: capturing from '{}'", device_name);
 
@@ -640,8 +658,7 @@ fn cpal_capture_thread(
         cpal::SampleFormat::I32 => device.build_input_stream(
             config.into(),
             move |data: &[i32], _: &cpal::InputCallbackInfo| {
-                let f32_data: Vec<f32> =
-                    data.iter().map(|&s| s as f32 / 2_147_483_648.0).collect();
+                let f32_data: Vec<f32> = data.iter().map(|&s| s as f32 / 2_147_483_648.0).collect();
                 push_to_buffer(
                     &f32_data,
                     channels,
@@ -689,6 +706,24 @@ fn cpal_capture_thread(
 mod tests {
     use super::*;
     use ringbuf::traits::Producer;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn unavailable_selected_reference_does_not_capture_default() {
+        let capture = LoopbackCapture::new();
+        capture
+            .start_for_output_device(Some(
+                "MicYou missing test output 87b9fe6b-6f96-4faf-86eb-20261101",
+            ))
+            .unwrap();
+        assert!(capture.join_capture_thread(Duration::from_secs(5)));
+        assert!(!capture.is_active());
+        assert_eq!(
+            capture.take_failure_reason(),
+            Some(AecFailure::ReferenceLost)
+        );
+        assert_eq!(capture.buffer.lock().unwrap().occupied_len(), 0);
+    }
 
     #[test]
     fn capture_failure_is_consumed_once() {
