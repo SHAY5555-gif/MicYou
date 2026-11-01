@@ -175,9 +175,19 @@ impl AudioOutputHandle {
                     published.store(manager.queued_ms().to_bits(), Ordering::Relaxed);
                     match cmd {
                         Ok(AudioOutputCommand::Open(device, buffer_ms, reply)) => {
-                            let ok = if manager.is_open() {
+                            let unchanged = recovery.target.as_ref().is_some_and(
+                                |(current_device, current_buffer_ms)| {
+                                    current_device == &device && *current_buffer_ms == buffer_ms
+                                },
+                            );
+                            let ok = if manager.is_open() && unchanged {
                                 true
                             } else {
+                                // A new selection replaces the old route, including its
+                                // recovery target. A failed switch must not resume the
+                                // previous speaker or silently use the system default.
+                                manager.close();
+                                recovery = Recovery::default();
                                 match manager.start(device.clone(), buffer_ms) {
                                     Ok(()) => {
                                         log::info!("[Audio] Output device opened");
@@ -227,8 +237,8 @@ impl AudioOutputHandle {
         Arc::new(Self::with_mute_flag(muted))
     }
 
-    /// Blocking open of the output device. Idempotent: returns immediately if
-    /// the stream is already open.
+    /// Blocking open of the output device. Reuses an open stream only when
+    /// both the selected device and buffer size are unchanged.
     pub fn ensure_open(&self, device: Option<String>, buffer_ms: usize) -> bool {
         let (reply_tx, reply_rx) = mpsc::channel();
         if self
