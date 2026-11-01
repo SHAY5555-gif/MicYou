@@ -91,4 +91,5 @@ Validation of the receiver changes:
   without opening a fallback device.
 - Live logs confirmed both output and AEC reference as EP-HDMI-RX. The existing
   desktop DSP preset was preserved. The user confirmed that direct test tones
-  came from the soundbar; this alone does not establish singing quality.
+  came from the soundbar, then confirmed that microphone speech/singing sounded
+  good through it with the updated receiver. Acoustic latency was not measured.
