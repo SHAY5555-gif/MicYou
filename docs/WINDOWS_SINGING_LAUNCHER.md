@@ -6,10 +6,16 @@ opens a connection panel and automatically connects the configured Android
 phone over USB to the selected Windows output. The existing MicYou app keeps
 its microphone gain, echo and music mixer controls on the phone.
 
-The panel provides output selection, Connect, Stop and Phone mixer. Closing
+The panel provides output selection, Connect, Stop and Phone mixer. Selecting
+a different output reconnects immediately, saves that choice and names the
+active target in the status message. Closing
 the panel stops its receiver and closes the configured phone app without
 clearing its data. No Windows startup entry, firewall change or system-wide
 audio default change is made.
+
+While its panel is open, the launcher checks that the selected speaker is
+still available every two seconds. It stops the connection if that endpoint
+disappears, instead of leaving the user connected to a different output.
 
 ## Installation
 
@@ -53,3 +59,9 @@ offscreen rendering; the desktop was not brought to the foreground.
 These are transport and control checks. They do not establish end-to-end
 acoustic latency or listening quality in the room. No new Android APK or
 upstream desktop binary is built by this launcher.
+
+The original working soundbar route was later cross-checked with its creator:
+EP-HDMI-RX was the PC-to-soundbar route, while SAMSUNG was another display
+output. An available device name is not proof of the intended physical route.
+During the follow-up, the local launcher was corrected to EP-HDMI-RX and the
+output-selector handler was fixed to apply changes immediately.

@@ -159,7 +159,7 @@ function Start-Singing {
         if ((Get-Content -LiteralPath $receiverLog -Raw) -notmatch '\[mic\] connected:') {
             throw 'The phone screen changed, but the receiver has not confirmed the connection.'
         }
-        return 'Connected. Microphone on. Mixer controls are on the phone.'
+        return "Microphone on. Output: $($script:config.outputDevice)"
     } catch {
         # A failed start must not leave an unexpected live microphone receiver.
         Stop-Singing
@@ -204,7 +204,7 @@ $title = Add-Label 'MicYou Singing' 22 42
 $title.Font = New-Object Drawing.Font('Segoe UI', 23, [Drawing.FontStyle]::Bold)
 $subtitle = Add-Label 'Phone microphone. PC speakers. One connection.' 69 28
 $subtitle.ForeColor = [Drawing.Color]::Silver
-$outputLabel = Add-Label 'Speaker output' 113 25
+$outputLabel = Add-Label 'Speaker output (changing it reconnects automatically)' 113 25
 $outputs = New-Object Windows.Forms.ComboBox
 $outputs.Location = New-Object Drawing.Point(26, 143)
 $outputs.Size = New-Object Drawing.Size(538, 32)
@@ -239,17 +239,22 @@ function Add-Button([string]$Text, [int]$X, [int]$Width) {
 $connect = Add-Button 'Connect' 26 164
 $stop = Add-Button 'Stop' 204 164
 $mixer = Add-Button 'Phone mixer' 382 182
-$connect.Add_Click({
+$script:isConnected = $false
+$connectAction = {
+    $script:isConnected = $false
     $connect.Enabled = $false; $status.Text = 'Connecting...'; $form.Refresh()
     try {
         if (-not $outputs.SelectedItem) { throw 'Choose an available speaker.' }
         $script:config.outputDevice = [string]$outputs.SelectedItem
         $script:config | ConvertTo-Json | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
         $status.Text = Start-Singing
+        $script:isConnected = $true
     } catch { $status.Text = $_.Exception.Message }
     finally { $connect.Enabled = $true }
-})
-$stop.Add_Click({ try { Stop-Singing; $status.Text = 'Stopped.' } catch { $status.Text = $_.Exception.Message } })
+}
+$connect.Add_Click($connectAction)
+$outputs.Add_SelectionChangeCommitted($connectAction)
+$stop.Add_Click({ try { Stop-Singing; $script:isConnected = $false; $status.Text = 'Stopped.' } catch { $status.Text = $_.Exception.Message } })
 $mixer.Add_Click({
     try { Invoke-Adb @('shell', 'am', 'start', '--activity-single-top', '-n', ($script:config.phonePackage + '/com.lanrhyme.micyou.MainActivity')) | Out-Null }
     catch { $status.Text = $_.Exception.Message }
@@ -276,7 +281,22 @@ if ($Action -eq 'Render') {
     [pscustomobject]@{ controlCount = $form.Controls.Count; outputCount = $outputs.Items.Count; selectedOutput = $outputs.Text } | ConvertTo-Json -Compress
     $bitmap.Dispose(); $form.Dispose(); $appMutex.Dispose(); exit
 }
-$form.Add_FormClosed({ Stop-Singing })
+$healthTimer = New-Object Windows.Forms.Timer
+$healthTimer.Interval = 2000
+$healthTimer.Add_Tick({
+    if (-not $script:isConnected -or -not $connect.Enabled) { return }
+    try {
+        if ($script:config.outputDevice -notin @(Get-Outputs)) {
+            Stop-Singing
+            $script:isConnected = $false
+            $status.Text = 'Selected output disconnected. Reconnect it and click Connect.'
+        }
+    } catch {
+        $status.Text = 'Could not check the selected speaker. Click Stop, then reconnect.'
+    }
+})
+$form.Add_FormClosed({ $healthTimer.Stop(); $healthTimer.Dispose(); Stop-Singing })
+$healthTimer.Start()
 $form.Add_Shown({ $connect.PerformClick() })
 [void]$form.ShowDialog()
 $appMutex.Dispose()
