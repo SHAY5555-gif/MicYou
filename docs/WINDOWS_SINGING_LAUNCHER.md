@@ -65,3 +65,30 @@ EP-HDMI-RX was the PC-to-soundbar route, while SAMSUNG was another display
 output. An available device name is not proof of the intended physical route.
 During the follow-up, the local launcher was corrected to EP-HDMI-RX and the
 output-selector handler was fixed to apply changes immediately.
+
+## Matching echo cancellation to the output
+
+The receiver now opens an explicitly selected device strictly. If that
+device is unavailable, startup fails rather than substituting the Windows
+default. A changed output reopens the stream, and Windows WASAPI echo
+cancellation uses that same selected output as its reference.
+
+Set `MICYOU_AUDIO_DIAGNOSTICS=1` for optional once-per-second input and processed
+RMS peaks. These diagnostic values contain no audio recording.
+
+Validation of the receiver changes:
+
+- 29 audio tests and 14 server tests passed, including missing-output and
+  missing-echo-reference cases.
+- The full core suite passed 148 of 149 tests. The remaining Windows
+  filename-case test in unchanged `platform/terminal.rs` also has a known
+  platform dependency and was not part of this routing change.
+- Clippy for both changed crates with `--no-deps --all-targets` passed with
+  existing warnings. Dependency-inclusive Clippy encountered an existing
+  approximate-constant lint in unchanged `micyou-infer/src/ops.rs`.
+- The optimized receiver was built, installed with a backup, and verified by
+  SHA-256. A separate runtime attempt with a nonexistent explicit output failed
+  without opening a fallback device.
+- Live logs confirmed both output and AEC reference as EP-HDMI-RX. The existing
+  desktop DSP preset was preserved. The user confirmed that direct test tones
+  came from the soundbar; this alone does not establish singing quality.
