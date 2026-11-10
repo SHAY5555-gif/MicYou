@@ -16,6 +16,9 @@ public sealed class StudioForm : Form
     private readonly ComboBox inputs = DeviceCombo();
     private readonly ComboBox outputs = DeviceCombo();
     private readonly ComboBox processing = DeviceCombo();
+    private readonly CheckBox minimumLatency = new();
+    private readonly MixerFader echoFader;
+    private readonly MixerFader delayFader;
     private readonly Label status;
     private readonly Label format;
     private readonly Label recordingStatus;
@@ -42,9 +45,9 @@ public sealed class StudioForm : Form
         this.autoStart = autoStart;
         settings = StudioSettings.Load();
         Text = "MicYou Singing";
-        ClientSize = new Size(940, 690);
-        MinimumSize = new Size(940, 729);
-        MaximumSize = new Size(940, 729);
+        ClientSize = new Size(940, 720);
+        MinimumSize = new Size(940, 759);
+        MaximumSize = new Size(940, 759);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Canvas;
         ForeColor = Color.FromArgb(237, 240, 251);
@@ -68,44 +71,51 @@ public sealed class StudioForm : Form
         var phone = Button("מיקרופון הטלפון", 198, 202, 158, 38);
         phone.Click += (_, _) => OpenProgram(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "MicYou-Singing", "MicYou Singing.exe"));
+        minimumLatency.Text = "מינימום דיליי";
+        minimumLatency.Checked = settings.MinimumLatency;
+        minimumLatency.ForeColor = Accent;
+        minimumLatency.BackColor = Canvas;
+        minimumLatency.AutoSize = false;
+        Place(minimumLatency, 30, 249, 250, 28);
+        if (settings.MinimumLatency) settings.EchoLevel = 0;
 
-        status = TextLabel("בחר מיקרופון ורמקול כדי להתחיל", 30, 260, 880, 29, 12);
+        status = TextLabel("בחר מיקרופון ורמקול כדי להתחיל", 30, 290, 880, 29, 12);
         status.ForeColor = Accent;
-        format = TextLabel("WAV ללא דחיסה נשמר ישירות מהקלט", 30, 291, 880, 23, 10);
+        format = TextLabel("WAV ללא דחיסה נשמר ישירות מהקלט", 30, 321, 880, 23, 10);
         format.ForeColor = Color.Silver;
-        TextLabel("קלט", 799, 334, 111, 23, 10);
-        TextLabel("שמיעה", 340, 334, 111, 23, 10);
-        Place(inputMeter, 485, 338, 307, 13);
-        Place(outputMeter, 30, 338, 301, 13);
+        TextLabel("קלט", 799, 364, 111, 23, 10);
+        TextLabel("שמיעה", 340, 364, 111, 23, 10);
+        Place(inputMeter, 485, 368, 307, 13);
+        Place(outputMeter, 30, 368, 301, 13);
 
-        AddFader("קול לשמיעה", 30, 365, 0, 300, (int)(settings.MicrophoneGain * 100), "%", value =>
+        AddFader("קול לשמיעה", 30, 395, 0, 300, (int)(settings.MicrophoneGain * 100), "%", value =>
         {
             settings.MicrophoneGain = value / 100f;
             if (session?.Monitor is { } monitor) Volatile.Write(ref monitor.Gain, settings.MicrophoneGain);
         });
-        AddFader("עוצמת שמיעה", 255, 365, 0, 100, (int)(settings.ListeningVolume * 100), "%", value =>
+        AddFader("עוצמת שמיעה", 255, 395, 0, 100, (int)(settings.ListeningVolume * 100), "%", value =>
         {
             settings.ListeningVolume = value / 100f;
             if (session?.Monitor is { } monitor) Volatile.Write(ref monitor.Volume, settings.ListeningVolume);
         });
-        AddFader("אקו", 480, 365, 0, 40, (int)(settings.EchoLevel * 100), "%", value =>
+        echoFader = AddFader("אקו", 480, 395, 0, 40, (int)(settings.EchoLevel * 100), "%", value =>
         {
             settings.EchoLevel = value / 100f;
             if (session?.Monitor is { } monitor) Volatile.Write(ref monitor.Echo, settings.EchoLevel);
         });
-        AddFader("זמן האקו", 705, 365, 50, 450, settings.EchoDelayMs, "ms", value =>
+        delayFader = AddFader("זמן האקו", 705, 395, 50, 450, settings.EchoDelayMs, "ms", value =>
         {
             settings.EchoDelayMs = value;
             if (session?.Monitor is { } monitor) Volatile.Write(ref monitor.EchoDelayMs, value);
         });
 
-        recordingStatus = TextLabel("הקלטה שומרת את המיקרופון המקורי", 230, 566, 680, 25, 10);
-        var folder = Button("תיקיית הקלטות", 30, 560, 180, 38);
+        recordingStatus = TextLabel("הקלטה שומרת את המיקרופון המקורי", 230, 596, 680, 25, 10);
+        var folder = Button("תיקיית הקלטות", 30, 590, 180, 38);
         folder.Click += (_, _) => OpenProgram(settings.RecordingFolder);
-        start = Button("הפעל שמיעה", 30, 610, 210, 52, Accent);
-        record = Button("הקלט", 252, 610, 210, 52, Coral);
-        stop = Button("עצור", 474, 610, 210, 52);
-        audacity = Button("פתח ב־Audacity", 696, 610, 214, 52);
+        start = Button("הפעל שמיעה", 30, 640, 210, 52, Accent);
+        record = Button("הקלט", 252, 640, 210, 52, Coral);
+        stop = Button("עצור", 474, 640, 210, 52);
+        audacity = Button("פתח ב־Audacity", 696, 640, 214, 52);
         start.Click += async (_, _) => await RunSafe(async () =>
         {
             if (session == null) await StartAsync();
@@ -135,6 +145,17 @@ public sealed class StudioForm : Form
         inputs.SelectionChangeCommitted += async (_, _) => await ChangeDeviceAsync();
         outputs.SelectionChangeCommitted += async (_, _) => await ChangeDeviceAsync();
         processing.SelectionChangeCommitted += async (_, _) => await ChangeDeviceAsync();
+        minimumLatency.CheckedChanged += async (_, _) => await RunSafe(async () =>
+        {
+            settings.MinimumLatency = minimumLatency.Checked;
+            if (settings.MinimumLatency)
+            {
+                echoFader.SetCurrentValue(0);
+                processing.SelectedIndex = 0;
+            }
+            settings.Save();
+            if (session != null) { await StopAsync(); await StartAsync(); }
+        });
         timer.Tick += (_, _) => UpdateMeters();
         Shown += async (_, _) =>
         {
@@ -204,7 +225,7 @@ public sealed class StudioForm : Form
         SuspendLayout();
         MinimumSize = Size.Empty;
         MaximumSize = Size.Empty;
-        ClientSize = new Size((int)(940 * scale), (int)(690 * scale));
+        ClientSize = new Size((int)(940 * scale), (int)(720 * scale));
         foreach (var (control, bounds) in designBounds)
         {
             if (control is ComboBox combo) combo.ItemHeight = (int)(24 * scale);
@@ -246,11 +267,12 @@ public sealed class StudioForm : Form
         return button;
     }
 
-    private void AddFader(string name, int x, int y, int minimum, int maximum, int value, string unit, Action<int> changed)
+    private MixerFader AddFader(string name, int x, int y, int minimum, int maximum, int value, string unit, Action<int> changed)
     {
         var fader = new MixerFader(name, minimum, maximum, value, unit) { BackColor = Surface };
         Place(fader, x, y, 205, 180);
         fader.ValueChanged += (_, _) => { changed(fader.Value); settings.Save(); };
+        return fader;
     }
 
     private void RefreshDevices()
@@ -310,6 +332,7 @@ public sealed class StudioForm : Form
         var audio = next.CaptureFormat!;
         var sampleType = next.CaptureIsFloat ? "float" : "PCM";
         format.Text = $"{audio.SampleRate:N0} Hz • {audio.BitsPerSample}-bit {sampleType} • {audio.Channels} ערוצים • WAV ללא דחיסה";
+        if (settings.MinimumLatency) format.Text += " • מינימום דיליי";
     }
 
     private async Task FinishRecordingAsync()
@@ -347,6 +370,9 @@ public sealed class StudioForm : Form
         start.Enabled = record.Enabled = stop.Enabled = !busy;
         refresh.Enabled = !busy && session == null;
         inputs.Enabled = outputs.Enabled = processing.Enabled = !busy && session?.Recording == null;
+        minimumLatency.Enabled = !busy && session?.Recording == null;
+        processing.Enabled = processing.Enabled && !settings.MinimumLatency;
+        echoFader.Enabled = delayFader.Enabled = !settings.MinimumLatency;
         audacity.Enabled = !busy && session?.Recording == null;
         start.Text = session == null ? "הפעל שמיעה" : session.Monitor?.Listening == true ? "השתק שמיעה" : "חדש שמיעה";
         record.Text = session?.Recording == null ? "הקלט" : "סיים הקלטה";
@@ -442,6 +468,7 @@ internal sealed class MixerFader : Control
         if (next == value) return;
         value = next; Invalidate(); ValueChanged?.Invoke(this, EventArgs.Empty);
     }
+    public void SetCurrentValue(int next) => SetValue(next);
     protected override void OnMouseDown(MouseEventArgs e) { Focus(); Capture = true; Drag(e.Y); }
     protected override void OnMouseMove(MouseEventArgs e) { if (Capture) Drag(e.Y); }
     protected override void OnMouseUp(MouseEventArgs e) { Capture = false; }
@@ -465,8 +492,8 @@ internal sealed class MixerFader : Control
         e.Graphics.ScaleTransform(scale, scale);
         var width = Width / scale;
         var height = Height / scale;
-        using var white = new SolidBrush(Color.FromArgb(235, 239, 250));
-        using var accent = new SolidBrush(Color.FromArgb(137, 153, 255));
+        using var white = new SolidBrush(Enabled ? Color.FromArgb(235, 239, 250) : Color.FromArgb(126, 135, 152));
+        using var accent = new SolidBrush(Enabled ? Color.FromArgb(137, 153, 255) : Color.FromArgb(100, 110, 129));
         using var pen = new Pen(Color.FromArgb(66, 75, 96), 2);
         using var centered = new StringFormat { Alignment = StringAlignment.Center };
         e.Graphics.DrawString(title, Font, white, new RectangleF(0, 8, width, 27), centered);

@@ -23,12 +23,12 @@ public sealed class LiveMonitor : ISampleProvider
     public float OutputPeak;
     public int Underruns;
 
-    public LiveMonitor(int sampleRate, int channels)
+    public LiveMonitor(int sampleRate, int channels, int prebufferMs = 20)
     {
         WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels);
         samples = new float[sampleRate * channels / 4];
         delay = new float[sampleRate * channels];
-        prebuffer = sampleRate * channels / 50;
+        prebuffer = Math.Max(channels, sampleRate * channels * prebufferMs / 1000);
     }
 
     public double QueuedMilliseconds

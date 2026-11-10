@@ -19,7 +19,7 @@ internal static class Program
             return 0;
         }
         if (args.Contains("--self-test")) return SelfTest.Run(args.Last());
-        if (args.Contains("--audio-check")) return AudioCheck.Run(args.Last()).GetAwaiter().GetResult();
+        if (args.Contains("--audio-check")) return AudioCheck.Run(args.Last(), args.Contains("--minimum")).GetAwaiter().GetResult();
         if (args.Contains("--render"))
         {
             Application.SetHighDpiMode(HighDpiMode.DpiUnaware);
@@ -39,16 +39,19 @@ internal static class Program
 
 internal static class AudioCheck
 {
-    public static async Task<int> Run(string folder)
+    public static async Task<int> Run(string folder, bool minimum)
     {
         try
         {
-            var input = StudioSettings.Endpoints(DataFlow.Capture).First(x => x.Name.Contains("Wireless Mic Rx"));
-            var output = StudioSettings.Endpoints(DataFlow.Render).First(x => x.Name.Contains("EP-HDMI-RX"));
+            var saved = StudioSettings.Load();
+            var inputs = StudioSettings.Endpoints(DataFlow.Capture);
+            var outputs = StudioSettings.Endpoints(DataFlow.Render);
+            var input = inputs.FirstOrDefault(x => x.Id == saved.InputId) ?? inputs.First(x => x.Name.Contains("Wireless Mic Rx"));
+            var output = outputs.FirstOrDefault(x => x.Id == saved.OutputId) ?? outputs.First(x => x.Name.Contains("EP-HDMI-RX"));
             await using var session = new LiveAudioSession();
             var errors = new List<string>();
             session.Failed += message => { lock (errors) errors.Add(message); };
-            session.Start(input.Id, output.Id, false, new StudioSettings { ListeningVolume = 0.2f });
+            session.Start(input.Id, output.Id, false, new StudioSettings { ListeningVolume = 0, MinimumLatency = minimum });
             session.StartRecording(folder);
             var peak = 0f;
             for (var count = 0; count < 50; count++)
@@ -68,6 +71,7 @@ internal static class AudioCheck
                 inputPeak = peak,
                 session.MaximumInputPeak,
                 session.CapturedSamples,
+                minimum,
                 bufferedMs = session.Monitor!.QueuedMilliseconds,
                 underruns = session.Monitor.Underruns,
                 recording = session.LastRecording,
@@ -111,6 +115,12 @@ internal static class SelfTest
             monitor.Read(received, 0, received.Length);
             if (received.Any(value => value != 0)) throw new Exception("Mute did not silence monitoring");
             if (monitor.Push(new float[48000])) throw new Exception("The bounded queue accepted an overflow");
+            var fast = new LiveMonitor(48000, 2, 0) { Volume = 1 };
+            var smallPacket = original.AsSpan(0, 96).ToArray();
+            fast.Push(smallPacket);
+            var immediate = new float[96];
+            fast.Read(immediate, 0, immediate.Length);
+            if (!smallPacket.SequenceEqual(immediate)) throw new Exception("Minimum latency waited for extra queued audio");
             Console.WriteLine(JsonSerializer.Serialize(new { passed = true, wav = file.Path, bytes = count }));
             return 0;
         }

@@ -43,8 +43,10 @@ public sealed class LiveAudioSession : IAsyncDisposable
 
         using var inputClient = input.CreateAudioClient();
         CaptureFormat = inputClient.MixFormat;
+        var minimum = settings.MinimumLatency;
+        if (minimum) echoCancellation = false;
         var builder = new WasapiRecorderBuilder().WithDevice(input).WithFormat(CaptureFormat)
-            .WithBufferLength(20).WithLowLatency().WithMmcssThreadPriority("Pro Audio");
+            .WithBufferLength(minimum ? 10 : 20).WithLowLatency(required: minimum).WithMmcssThreadPriority("Pro Audio");
         if (echoCancellation) builder.WithCommunicationsMode().WithEchoCancellationReferenceEndpoint(output);
         else builder.WithRawMode();
         recorder = builder.Build();
@@ -54,15 +56,15 @@ public sealed class LiveAudioSession : IAsyncDisposable
             extended.SubFormat == new Guid("00000003-0000-0010-8000-00aa00389b71");
         if (bytesPerSample is < 1 or > 8 || (isFloat && bytesPerSample is not (4 or 8)))
             throw new NotSupportedException("פורמט המיקרופון אינו נתמך");
-        Monitor = new LiveMonitor(CaptureFormat.SampleRate, CaptureFormat.Channels)
+        Monitor = new LiveMonitor(CaptureFormat.SampleRate, CaptureFormat.Channels, minimum ? 0 : 20)
         {
             Gain = settings.MicrophoneGain,
             Volume = settings.ListeningVolume,
-            Echo = settings.EchoLevel,
+            Echo = minimum ? 0 : settings.EchoLevel,
             EchoDelayMs = settings.EchoDelayMs
         };
-        player = new WasapiPlayerBuilder().WithDevice(output).WithLowLatency()
-            .WithLatency(20).WithMmcssThreadPriority("Pro Audio").Build();
+        player = new WasapiPlayerBuilder().WithDevice(output).WithLowLatency(required: minimum)
+            .WithLatency(minimum ? 10 : 20).WithMmcssThreadPriority("Pro Audio").Build();
         player.Init(new SampleToWaveProvider(Monitor));
         player.PlaybackStopped += (_, args) =>
         {
