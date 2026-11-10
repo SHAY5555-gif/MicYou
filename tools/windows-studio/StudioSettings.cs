@@ -19,6 +19,7 @@ public sealed class StudioSettings
     public float EchoLevel { get; set; }
     public int EchoDelayMs { get; set; } = 160;
     public bool MinimumLatency { get; set; }
+    public bool ExclusiveMode { get; set; }
 
     private static string ConfigPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "micyou", "studio.json");

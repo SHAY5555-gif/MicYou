@@ -19,7 +19,8 @@ internal static class Program
             return 0;
         }
         if (args.Contains("--self-test")) return SelfTest.Run(args.Last());
-        if (args.Contains("--audio-check")) return AudioCheck.Run(args.Last(), args.Contains("--minimum")).GetAwaiter().GetResult();
+        if (args.Contains("--audio-check")) return AudioCheck.Run(args.Last(), args.Contains("--minimum"),
+            args.Contains("--exclusive"), args.Contains("--hdmi"), args.Contains("--long")).GetAwaiter().GetResult();
         if (args.Contains("--render"))
         {
             Application.SetHighDpiMode(HighDpiMode.DpiUnaware);
@@ -39,7 +40,7 @@ internal static class Program
 
 internal static class AudioCheck
 {
-    public static async Task<int> Run(string folder, bool minimum)
+    public static async Task<int> Run(string folder, bool minimum, bool exclusive, bool hdmi, bool longCheck)
     {
         try
         {
@@ -47,17 +48,26 @@ internal static class AudioCheck
             var inputs = StudioSettings.Endpoints(DataFlow.Capture);
             var outputs = StudioSettings.Endpoints(DataFlow.Render);
             var input = inputs.FirstOrDefault(x => x.Id == saved.InputId) ?? inputs.First(x => x.Name.Contains("Wireless Mic Rx"));
-            var output = outputs.FirstOrDefault(x => x.Id == saved.OutputId) ?? outputs.First(x => x.Name.Contains("EP-HDMI-RX"));
+            var output = hdmi ? outputs.First(x => x.Name.Contains("EP-HDMI-RX"))
+                : outputs.FirstOrDefault(x => x.Id == saved.OutputId) ?? outputs.First(x => x.Name.Contains("EP-HDMI-RX"));
             await using var session = new LiveAudioSession();
             var errors = new List<string>();
             session.Failed += message => { lock (errors) errors.Add(message); };
-            session.Start(input.Id, output.Id, false, new StudioSettings { ListeningVolume = 0, MinimumLatency = minimum });
+            session.Start(input.Id, output.Id, false, new StudioSettings
+            {
+                ListeningVolume = 0,
+                MinimumLatency = minimum || exclusive,
+                ExclusiveMode = exclusive
+            });
             session.StartRecording(folder);
             var peak = 0f;
-            for (var count = 0; count < 50; count++)
+            var maxBufferedMs = 0.0;
+            var checks = longCheck ? 300 : 50;
+            for (var count = 0; count < checks; count++)
             {
                 await Task.Delay(100);
                 peak = Math.Max(peak, Volatile.Read(ref session.InputPeak));
+                maxBufferedMs = Math.Max(maxBufferedMs, session.Monitor!.QueuedMilliseconds);
             }
             await session.StopRecordingAsync();
             using var recording = new WaveFileReader(session.LastRecording!);
@@ -71,9 +81,12 @@ internal static class AudioCheck
                 inputPeak = peak,
                 session.MaximumInputPeak,
                 session.CapturedSamples,
-                minimum,
+                minimum = minimum || exclusive,
+                exclusive,
                 bufferedMs = session.Monitor!.QueuedMilliseconds,
+                maxBufferedMs,
                 underruns = session.Monitor.Underruns,
+                skippedFrames = session.Monitor.SkippedFrames,
                 recording = session.LastRecording,
                 recordingBytes = recording.Length,
                 format = recording.WaveFormat.ToString(),
@@ -121,6 +134,17 @@ internal static class SelfTest
             var immediate = new float[96];
             fast.Read(immediate, 0, immediate.Length);
             if (!smallPacket.SequenceEqual(immediate)) throw new Exception("Minimum latency waited for extra queued audio");
+            var bounded = new LiveMonitor(48000, 2, 0, 3) { Volume = 1 };
+            if (!bounded.Push(original) || bounded.QueuedMilliseconds > 3 || bounded.SkippedFrames == 0)
+                throw new Exception("Delayed monitoring audio exceeded the live queue limit");
+            var latest = new float[288];
+            bounded.Read(latest);
+            if (!latest.AsSpan(96).SequenceEqual(original.AsSpan(original.Length - 192)))
+                throw new Exception("The bounded live queue did not resume at the newest audio");
+            bounded.Listening = false;
+            bounded.Push(original);
+            bounded.Read(latest);
+            if (latest.Any(value => value != 0)) throw new Exception("A monitoring crossfade bypassed mute");
             Console.WriteLine(JsonSerializer.Serialize(new { passed = true, wav = file.Path, bytes = count }));
             return 0;
         }

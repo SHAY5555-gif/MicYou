@@ -10,7 +10,9 @@ public sealed class LiveAudioSession : IAsyncDisposable
 {
     private readonly object recordingLock = new();
     private readonly ManualResetEventSlim captureStopped = new(false);
+    private readonly ManualResetEventSlim captureReady = new(false);
     private WasapiRecorder? recorder;
+    private ExclusiveCapture? exclusiveCapture;
     private WasapiPlayer? player;
     private MMDevice? input;
     private MMDevice? output;
@@ -19,6 +21,7 @@ public sealed class LiveAudioSession : IAsyncDisposable
     private bool captureStarted;
     private bool isFloat;
     private int bytesPerSample;
+    private double startupPrefillMs;
     public LiveMonitor? Monitor { get; private set; }
     public WaveFormat? CaptureFormat { get; private set; }
     public bool CaptureIsFloat => isFloat;
@@ -28,9 +31,10 @@ public sealed class LiveAudioSession : IAsyncDisposable
     public bool IsRunning { get; private set; }
     public string? LastRecording { get; private set; }
     public LosslessRecording? Recording { get { lock (recordingLock) return recording; } }
-    public double CapturePeriodMs => recorder?.LatencyMilliseconds ?? 0;
+    public double CapturePeriodMs => exclusiveCapture?.PeriodMilliseconds ?? recorder?.LatencyMilliseconds ?? 0;
     public double OutputPeriodMs => player?.LatencyMilliseconds ?? 0;
-    public bool LowLatency => recorder?.LowLatencyActive == true && player?.LowLatencyActive == true;
+    public bool ExclusiveMode => exclusiveCapture != null;
+    public bool LowLatency => ExclusiveMode || recorder?.LowLatencyActive == true && player?.LowLatencyActive == true;
     public event Action<string>? Failed;
 
     public void Start(string inputId, string outputId, bool echoCancellation, StudioSettings settings)
@@ -44,40 +48,74 @@ public sealed class LiveAudioSession : IAsyncDisposable
         using var inputClient = input.CreateAudioClient();
         CaptureFormat = inputClient.MixFormat;
         var minimum = settings.MinimumLatency;
+        var exclusive = minimum && settings.ExclusiveMode;
         if (minimum) echoCancellation = false;
-        var builder = new WasapiRecorderBuilder().WithDevice(input).WithFormat(CaptureFormat)
-            .WithBufferLength(minimum ? 10 : 20).WithLowLatency(required: minimum).WithMmcssThreadPriority("Pro Audio");
-        if (echoCancellation) builder.WithCommunicationsMode().WithEchoCancellationReferenceEndpoint(output);
-        else builder.WithRawMode();
-        recorder = builder.Build();
+        if (exclusive)
+        {
+            exclusiveCapture = new ExclusiveCapture(input);
+            CaptureFormat = exclusiveCapture.WaveFormat;
+            exclusiveCapture.DataAvailable += OnData;
+            exclusiveCapture.Stopped += error =>
+            {
+                if (!stopping && error != null) Failed?.Invoke(error.Message);
+            };
+        }
+        else
+        {
+            var builder = new WasapiRecorderBuilder().WithDevice(input).WithFormat(CaptureFormat)
+                .WithBufferLength(minimum ? 10 : 20).WithLowLatency(required: minimum).WithMmcssThreadPriority("Pro Audio");
+            if (echoCancellation) builder.WithCommunicationsMode().WithEchoCancellationReferenceEndpoint(output);
+            else builder.WithRawMode();
+            recorder = builder.Build();
+            recorder.DataAvailable += OnData;
+            recorder.RecordingStopped += (_, args) =>
+            {
+                captureStopped.Set();
+                if (!stopping && args.Exception != null) Failed?.Invoke(args.Exception.Message);
+            };
+        }
         bytesPerSample = CaptureFormat.BitsPerSample / 8;
         isFloat = CaptureFormat.Encoding == WaveFormatEncoding.IeeeFloat ||
             CaptureFormat is WaveFormatExtensible extended &&
             extended.SubFormat == new Guid("00000003-0000-0010-8000-00aa00389b71");
         if (bytesPerSample is < 1 or > 8 || (isFloat && bytesPerSample is not (4 or 8)))
             throw new NotSupportedException("פורמט המיקרופון אינו נתמך");
-        Monitor = new LiveMonitor(CaptureFormat.SampleRate, CaptureFormat.Channels, minimum ? 0 : 20)
+        var maximumQueuedMs = minimum ? 30 : 0;
+        var outputPeriodMs = minimum ? 10 : 20;
+        if (exclusive)
+        {
+            using var outputClient = output.CreateAudioClient();
+            outputPeriodMs = (int)Math.Ceiling(outputClient.MinimumDevicePeriod / 10000.0);
+            var driverPeriodMs = Math.Max(exclusiveCapture!.PeriodMilliseconds, outputPeriodMs);
+            maximumQueuedMs = (int)Math.Ceiling(driverPeriodMs * 4);
+            startupPrefillMs = driverPeriodMs * 2;
+        }
+        Monitor = new LiveMonitor(CaptureFormat.SampleRate, CaptureFormat.Channels,
+            minimum ? 0 : 20, maximumQueuedMs)
         {
             Gain = settings.MicrophoneGain,
             Volume = settings.ListeningVolume,
             Echo = minimum ? 0 : settings.EchoLevel,
             EchoDelayMs = settings.EchoDelayMs
         };
-        player = new WasapiPlayerBuilder().WithDevice(output).WithLowLatency(required: minimum)
-            .WithLatency(minimum ? 10 : 20).WithMmcssThreadPriority("Pro Audio").Build();
+        var playback = new WasapiPlayerBuilder().WithDevice(output).WithMmcssThreadPriority("Pro Audio");
+        if (exclusive)
+        {
+            playback.WithExclusiveMode().WithLatency(outputPeriodMs);
+        }
+        else playback.WithLowLatency(required: minimum).WithLatency(minimum ? 10 : 20);
+        if (minimum) playback.WithRawMode();
+        player = playback.Build();
         player.Init(new SampleToWaveProvider(Monitor));
         player.PlaybackStopped += (_, args) =>
         {
             if (!stopping && args.Exception != null) Failed?.Invoke(args.Exception.Message);
         };
-        recorder.DataAvailable += OnData;
-        recorder.RecordingStopped += (_, args) =>
-        {
-            captureStopped.Set();
-            if (!stopping && args.Exception != null) Failed?.Invoke(args.Exception.Message);
-        };
-        recorder.StartRecording();
+        if (exclusiveCapture != null) exclusiveCapture.Start();
+        else recorder!.StartRecording();
         captureStarted = true;
+        if (exclusive && !captureReady.Wait(TimeSpan.FromSeconds(1)))
+            throw new IOException("המיקרופון לא העביר שמע בזמן ההפעלה. בדוק את החיבור ונסה שוב");
         player.Play();
         IsRunning = true;
     }
@@ -86,7 +124,6 @@ public sealed class LiveAudioSession : IAsyncDisposable
     {
         if (stopping || Monitor == null) return;
         var silent = (flags & AudioClientBufferFlags.Silent) != 0;
-        lock (recordingLock) recording?.Append(buffer, silent);
         var count = buffer.Length / bytesPerSample;
         var decoded = ArrayPool<float>.Shared.Rent(count);
         try
@@ -104,8 +141,10 @@ public sealed class LiveAudioSession : IAsyncDisposable
             Interlocked.Add(ref CapturedSamples, count);
             if (!Monitor.Push(decoded.AsSpan(0, count)))
                 Failed?.Invoke("באפר השמע התמלא. עצור והפעל שוב את המיקרופון");
+            if (!captureReady.IsSet && Monitor.QueuedMilliseconds >= startupPrefillMs) captureReady.Set();
         }
         finally { ArrayPool<float>.Shared.Return(decoded); }
+        lock (recordingLock) recording?.Append(buffer, silent);
     }
 
     private float Decode(ReadOnlySpan<byte> value)
@@ -149,6 +188,7 @@ public sealed class LiveAudioSession : IAsyncDisposable
         IsRunning = false;
         try
         {
+            exclusiveCapture?.Dispose();
             if (recorder != null && captureStarted)
             {
                 recorder.StopRecording();
@@ -165,7 +205,13 @@ public sealed class LiveAudioSession : IAsyncDisposable
                 finally
                 {
                     try { player?.Dispose(); }
-                    finally { input?.Dispose(); output?.Dispose(); }
+                    finally
+                    {
+                        input?.Dispose();
+                        output?.Dispose();
+                        captureReady.Dispose();
+                        captureStopped.Dispose();
+                    }
                 }
             }
         }

@@ -17,11 +17,13 @@ public sealed class StudioForm : Form
     private readonly ComboBox outputs = DeviceCombo();
     private readonly ComboBox processing = DeviceCombo();
     private readonly CheckBox minimumLatency = new();
+    private readonly CheckBox exclusiveAudio = new();
     private readonly MixerFader echoFader;
     private readonly MixerFader delayFader;
     private readonly Label status;
     private readonly Label format;
     private readonly Label recordingStatus;
+    private readonly Label latencyStatus;
     private readonly Button start;
     private readonly Button record;
     private readonly Button stop;
@@ -77,12 +79,19 @@ public sealed class StudioForm : Form
         minimumLatency.BackColor = Canvas;
         minimumLatency.AutoSize = false;
         Place(minimumLatency, 30, 249, 250, 28);
+        exclusiveAudio.Text = "גישה בלעדית למיקרופון ולרמקול";
+        exclusiveAudio.Checked = settings.ExclusiveMode;
+        exclusiveAudio.ForeColor = Accent;
+        exclusiveAudio.BackColor = Canvas;
+        Place(exclusiveAudio, 320, 249, 590, 28);
         if (settings.MinimumLatency) settings.EchoLevel = 0;
 
         status = TextLabel("בחר מיקרופון ורמקול כדי להתחיל", 30, 290, 880, 29, 12);
         status.ForeColor = Accent;
         format = TextLabel("WAV ללא דחיסה נשמר ישירות מהקלט", 30, 321, 880, 23, 10);
         format.ForeColor = Color.Silver;
+        latencyStatus = TextLabel("מחזורי השמע יוצגו לאחר ההפעלה", 30, 344, 880, 20, 9);
+        latencyStatus.ForeColor = Color.Silver;
         TextLabel("קלט", 799, 364, 111, 23, 10);
         TextLabel("שמיעה", 340, 364, 111, 23, 10);
         Place(inputMeter, 485, 368, 307, 13);
@@ -145,17 +154,8 @@ public sealed class StudioForm : Form
         inputs.SelectionChangeCommitted += async (_, _) => await ChangeDeviceAsync();
         outputs.SelectionChangeCommitted += async (_, _) => await ChangeDeviceAsync();
         processing.SelectionChangeCommitted += async (_, _) => await ChangeDeviceAsync();
-        minimumLatency.CheckedChanged += async (_, _) => await RunSafe(async () =>
-        {
-            settings.MinimumLatency = minimumLatency.Checked;
-            if (settings.MinimumLatency)
-            {
-                echoFader.SetCurrentValue(0);
-                processing.SelectedIndex = 0;
-            }
-            settings.Save();
-            if (session != null) { await StopAsync(); await StartAsync(); }
-        });
+        minimumLatency.CheckedChanged += async (_, _) => await ChangeAudioModeAsync();
+        exclusiveAudio.CheckedChanged += async (_, _) => await ChangeAudioModeAsync();
         timer.Tick += (_, _) => UpdateMeters();
         Shown += async (_, _) =>
         {
@@ -306,6 +306,23 @@ public sealed class StudioForm : Form
         });
     }
 
+    private async Task ChangeAudioModeAsync()
+    {
+        await RunSafe(async () =>
+        {
+            settings.MinimumLatency = minimumLatency.Checked;
+            settings.ExclusiveMode = settings.MinimumLatency && exclusiveAudio.Checked;
+            if (!settings.MinimumLatency) exclusiveAudio.Checked = false;
+            if (settings.MinimumLatency)
+            {
+                echoFader.SetCurrentValue(0);
+                processing.SelectedIndex = 0;
+            }
+            settings.Save();
+            if (session != null) { await StopAsync(); await StartAsync(); }
+        });
+    }
+
     private async Task StartAsync()
     {
         if (inputs.SelectedItem is not AudioEndpoint source || outputs.SelectedItem is not AudioEndpoint target)
@@ -371,6 +388,7 @@ public sealed class StudioForm : Form
         refresh.Enabled = !busy && session == null;
         inputs.Enabled = outputs.Enabled = processing.Enabled = !busy && session?.Recording == null;
         minimumLatency.Enabled = !busy && session?.Recording == null;
+        exclusiveAudio.Enabled = minimumLatency.Enabled && settings.MinimumLatency;
         processing.Enabled = processing.Enabled && !settings.MinimumLatency;
         echoFader.Enabled = delayFader.Enabled = !settings.MinimumLatency;
         audacity.Enabled = !busy && session?.Recording == null;
@@ -380,6 +398,9 @@ public sealed class StudioForm : Form
 
     private void UpdateMeters()
     {
+        latencyStatus.Text = session?.IsRunning == true
+            ? $"מחזורי שמע • כניסה {session.CapturePeriodMs:0.#} ms • יציאה {session.OutputPeriodMs:0.#} ms • תור שמיעה {session.Monitor!.QueuedMilliseconds:0.#} ms"
+            : "מחזורי השמע יוצגו לאחר ההפעלה";
         inputMeter.Level = session == null ? 0 : Interlocked.Exchange(ref session.InputPeak, 0);
         outputMeter.Level = session?.Monitor is { } monitor ? Interlocked.Exchange(ref monitor.OutputPeak, 0) : 0;
         if (session?.Recording is { } recording)
