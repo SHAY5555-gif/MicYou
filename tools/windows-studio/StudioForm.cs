@@ -31,7 +31,9 @@ public sealed class StudioForm : Form
     private readonly Button refresh;
     private readonly LevelMeter inputMeter = new();
     private readonly LevelMeter outputMeter = new();
+    private readonly ComputerAudioVolume computerAudio = new();
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 80 };
+    private long nextComputerAudioRefresh;
     private LiveAudioSession? session;
     private string? lastRecording;
     private bool busy;
@@ -46,6 +48,8 @@ public sealed class StudioForm : Form
     {
         this.autoStart = autoStart;
         settings = StudioSettings.Load();
+        settings.MicrophoneGain = Math.Clamp(settings.MicrophoneGain * settings.ListeningVolume, 0, 3);
+        settings.ListeningVolume = 1;
         Text = "MicYou Singing";
         ClientSize = new Size(940, 720);
         MinimumSize = new Size(940, 759);
@@ -79,7 +83,7 @@ public sealed class StudioForm : Form
         minimumLatency.BackColor = Canvas;
         minimumLatency.AutoSize = false;
         Place(minimumLatency, 30, 249, 250, 28);
-        exclusiveAudio.Text = "גישה בלעדית למיקרופון ולרמקול";
+        exclusiveAudio.Text = "גישה בלעדית למיקרופון";
         exclusiveAudio.Checked = settings.ExclusiveMode;
         exclusiveAudio.ForeColor = Accent;
         exclusiveAudio.BackColor = Canvas;
@@ -97,15 +101,15 @@ public sealed class StudioForm : Form
         Place(inputMeter, 485, 368, 307, 13);
         Place(outputMeter, 30, 368, 301, 13);
 
-        AddFader("קול לשמיעה", 30, 395, 0, 300, (int)(settings.MicrophoneGain * 100), "%", value =>
+        AddFader("מיקרופון", 30, 395, 0, 300, (int)(settings.MicrophoneGain * 100), "%", value =>
         {
             settings.MicrophoneGain = value / 100f;
             if (session?.Monitor is { } monitor) Volatile.Write(ref monitor.Gain, settings.MicrophoneGain);
         });
-        AddFader("עוצמת שמיעה", 255, 395, 0, 100, (int)(settings.ListeningVolume * 100), "%", value =>
+        AddFader("מוזיקה מהמחשב", 255, 395, 0, 100, (int)(settings.ComputerVolume * 100), "%", value =>
         {
-            settings.ListeningVolume = value / 100f;
-            if (session?.Monitor is { } monitor) Volatile.Write(ref monitor.Volume, settings.ListeningVolume);
+            settings.ComputerVolume = value / 100f;
+            UpdateComputerAudio();
         });
         echoFader = AddFader("אקו", 480, 395, 0, 40, (int)(settings.EchoLevel * 100), "%", value =>
         {
@@ -159,6 +163,7 @@ public sealed class StudioForm : Form
         timer.Tick += (_, _) => UpdateMeters();
         Shown += async (_, _) =>
         {
+            UpdateComputerAudio();
             timer.Start();
             if (autoStart && inputs.SelectedItem != null && outputs.SelectedItem != null) await RunSafe(StartAsync);
         };
@@ -174,7 +179,7 @@ public sealed class StudioForm : Form
             allowClose = true;
             Close();
         };
-        FormClosed += (_, _) => timer.Dispose();
+        FormClosed += (_, _) => { timer.Dispose(); computerAudio.Dispose(); };
         RefreshDevices();
         UpdateButtons();
     }
@@ -300,6 +305,7 @@ public sealed class StudioForm : Form
     private async Task ChangeDeviceAsync()
     {
         if (refreshing || busy) return;
+        UpdateComputerAudio();
         await RunSafe(async () =>
         {
             if (session != null) { await StopAsync(); await StartAsync(); }
@@ -398,6 +404,11 @@ public sealed class StudioForm : Form
 
     private void UpdateMeters()
     {
+        if (Environment.TickCount64 >= nextComputerAudioRefresh)
+        {
+            UpdateComputerAudio();
+            nextComputerAudioRefresh = Environment.TickCount64 + 500;
+        }
         latencyStatus.Text = session?.IsRunning == true
             ? $"מחזורי שמע • כניסה {session.CapturePeriodMs:0.#} ms • יציאה {session.OutputPeriodMs:0.#} ms • תור שמיעה {session.Monitor!.QueuedMilliseconds:0.#} ms"
             : "מחזורי השמע יוצגו לאחר ההפעלה";
@@ -409,6 +420,17 @@ public sealed class StudioForm : Form
             recordingStatus.Text = recording.Error ?? $"מקליט WAV • {(DateTime.Now - recording.StartedAt):mm\\:ss}";
         }
         else recordingStatus.ForeColor = Color.Silver;
+    }
+
+    private void UpdateComputerAudio()
+    {
+        if (!Visible) return;
+        try
+        {
+            computerAudio.SetOutput((outputs.SelectedItem as AudioEndpoint)?.Id);
+            computerAudio.SetVolume(settings.ComputerVolume);
+        }
+        catch (Exception error) { status.Text = $"שליטה במוזיקת המחשב • {error.Message}"; }
     }
 
     private void OpenProgram(string path, string? argument = null)

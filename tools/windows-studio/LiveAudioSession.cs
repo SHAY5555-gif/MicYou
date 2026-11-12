@@ -34,7 +34,7 @@ public sealed class LiveAudioSession : IAsyncDisposable
     public double CapturePeriodMs => exclusiveCapture?.PeriodMilliseconds ?? recorder?.LatencyMilliseconds ?? 0;
     public double OutputPeriodMs => player?.LatencyMilliseconds ?? 0;
     public bool ExclusiveMode => exclusiveCapture != null;
-    public bool LowLatency => ExclusiveMode || recorder?.LowLatencyActive == true && player?.LowLatencyActive == true;
+    public bool LowLatency => (ExclusiveMode || recorder?.LowLatencyActive == true) && player?.LowLatencyActive == true;
     public event Action<string>? Failed;
 
     public void Start(string inputId, string outputId, bool echoCancellation, StudioSettings settings)
@@ -85,9 +85,10 @@ public sealed class LiveAudioSession : IAsyncDisposable
         if (exclusive)
         {
             using var outputClient = output.CreateAudioClient();
-            outputPeriodMs = (int)Math.Ceiling(outputClient.MinimumDevicePeriod / 10000.0);
+            var outputPeriods = outputClient.GetSharedModeEnginePeriod(outputClient.MixFormat);
+            outputPeriodMs = (int)Math.Ceiling(1000.0 * outputPeriods.MinPeriodInFrames / outputClient.MixFormat.SampleRate);
             var driverPeriodMs = Math.Max(exclusiveCapture!.PeriodMilliseconds, outputPeriodMs);
-            maximumQueuedMs = (int)Math.Ceiling(driverPeriodMs * 4);
+            maximumQueuedMs = (int)Math.Ceiling(driverPeriodMs * 3);
             startupPrefillMs = driverPeriodMs * 2;
         }
         Monitor = new LiveMonitor(CaptureFormat.SampleRate, CaptureFormat.Channels,
@@ -99,11 +100,7 @@ public sealed class LiveAudioSession : IAsyncDisposable
             EchoDelayMs = settings.EchoDelayMs
         };
         var playback = new WasapiPlayerBuilder().WithDevice(output).WithMmcssThreadPriority("Pro Audio");
-        if (exclusive)
-        {
-            playback.WithExclusiveMode().WithLatency(outputPeriodMs);
-        }
-        else playback.WithLowLatency(required: minimum).WithLatency(minimum ? 10 : 20);
+        playback.WithLowLatency(required: minimum).WithLatency(outputPeriodMs);
         if (minimum) playback.WithRawMode();
         player = playback.Build();
         player.Init(new SampleToWaveProvider(Monitor));

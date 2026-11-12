@@ -16,6 +16,7 @@ public sealed class StudioSettings
         Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), "MicYou Recordings");
     public float MicrophoneGain { get; set; } = 1;
     public float ListeningVolume { get; set; } = 0.5f;
+    public float ComputerVolume { get; set; } = 1;
     public float EchoLevel { get; set; }
     public int EchoDelayMs { get; set; } = 160;
     public bool MinimumLatency { get; set; }
